@@ -1,0 +1,85 @@
+:root {
+  --bg: #1e1e1e;
+  --panel: #262626;
+  --panel-2: #2d2d2d;
+  --text: #e4e4e4;
+  --muted: #9a9a9a;
+  --accent: #4a9eff;
+  --accent-soft: rgba(74, 158, 255, 0.15);
+  --border: #3a3a3a;
+  --danger: #ff6b6b;
+  --done: #6b9e6b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+}
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+button:hover {
+  border-color: var(--accent);
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+button.ghost:hover {
+  color: var(--text);
+}
+button.danger {
+  color: var(--danger);
+  border-color: transparent;
+  background: transparent;
+}
+button.danger:hover {
+  border-color: var(--danger);
+}
+
+input,
+textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  width: 100%;
+}
+input:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
