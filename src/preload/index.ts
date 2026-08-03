@@ -19,6 +19,17 @@ const api: Api = {
   export: {
     exportMarkdown: () => ipcRenderer.invoke(IPC.export.exportMarkdown)
   },
+  segments: {
+    list: (day) => ipcRenderer.invoke(IPC.segments.list, day),
+    update: (id, patch) => ipcRenderer.invoke(IPC.segments.update, id, patch)
+  },
+  time: {
+    export: (day) => ipcRenderer.invoke(IPC.time.export, day)
+  },
+  tracker: {
+    getOffWork: () => ipcRenderer.invoke(IPC.tracker.getOffWork),
+    setOffWork: (on) => ipcRenderer.invoke(IPC.tracker.setOffWork, on)
+  },
   shell: {
     openExternal: (url) => ipcRenderer.invoke(IPC.shell.openExternal, url)
   },

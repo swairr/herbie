@@ -5,6 +5,7 @@ const DEFAULTS: Settings = {
   shortcut: 'Ctrl+Shift+Space',
   exportDir: '',
   draft: '',
+  idleThresholdSec: '300',
   shortcutError: null
 }
 

@@ -31,6 +31,7 @@ export interface Settings {
   shortcut: string
   exportDir: string
   draft: string
+  idleThresholdSec: string
   shortcutError?: string | null
 }
 
@@ -40,6 +41,32 @@ export interface ExportResult {
   ok: boolean
   path?: string
   error?: string
+}
+
+export type SegmentKind = 'activity' | 'idle'
+
+export interface Segment {
+  id: string
+  startAt: string
+  endAt: string | null
+  processName: string
+  title: string
+  note: string
+  todoId: string | null
+  kind: SegmentKind
+}
+
+export interface SegmentPatch {
+  note?: string
+  todoId?: string | null
+}
+
+export interface OffWorkState {
+  offWork: boolean
+}
+
+export interface TimeExportResult extends ExportResult {
+  day?: string
 }
 
 export interface Api {
@@ -58,6 +85,17 @@ export interface Api {
   }
   export: {
     exportMarkdown: () => Promise<ExportResult>
+  }
+  segments: {
+    list: (day: string) => Promise<Segment[]>
+    update: (id: string, patch: SegmentPatch) => Promise<Segment | null>
+  }
+  time: {
+    export: (day: string) => Promise<TimeExportResult>
+  }
+  tracker: {
+    getOffWork: () => Promise<OffWorkState>
+    setOffWork: (on: boolean) => Promise<OffWorkState>
   }
   shell: {
     openExternal: (url: string) => Promise<void>

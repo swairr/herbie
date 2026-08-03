@@ -32,8 +32,59 @@ describe('runMigrations', () => {
     const rows = db.prepare('SELECT version FROM migrations ORDER BY version').all() as {
       version: number
     }[]
-    expect(rows).toHaveLength(1)
+    expect(rows).toHaveLength(2)
     expect(rows[0].version).toBe(1)
+    expect(rows[1].version).toBe(2)
+  })
+
+  it('creates the segments table (v2) and records version 2', () => {
+    runMigrations(db)
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .all() as { name: string }[]
+    expect(tables.map((t) => t.name)).toContain('segments')
+    const v2 = db.prepare('SELECT version FROM migrations WHERE version = 2').get() as
+      | { version: number }
+      | undefined
+    expect(v2?.version).toBe(2)
+  })
+
+  it('v2 migration is idempotent on rerun', () => {
+    runMigrations(db)
+    expect(() => runMigrations(db)).not.toThrow()
+  })
+
+  it('segments table accepts a row with open endAt and defaults', () => {
+    runMigrations(db)
+    db.prepare(
+      `INSERT INTO segments (id, startAt, endAt, processName, title, note, todoId, kind)
+       VALUES (?,?,?,?,?,?,?,?)`
+    ).run('seg1', '2026-08-03T10:00:00Z', null, 'app.exe', 'Title', '', null, 'activity')
+    const row = db.prepare('SELECT * FROM segments WHERE id = ?').get('seg1') as {
+      endAt: string | null
+      kind: string
+      processName: string
+    }
+    expect(row.endAt).toBeNull()
+    expect(row.kind).toBe('activity')
+    expect(row.processName).toBe('app.exe')
+  })
+
+  it('segments.todoId is SET NULL when its todo is hard-deleted', () => {
+    runMigrations(db)
+    db.prepare(
+      `INSERT INTO todos (id, title, detail, createdAt, updatedAt, completedAt, deletedAt)
+       VALUES (?,?,?,?,?,?,?)`
+    ).run('t1', 't', '', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', null, null)
+    db.prepare(
+      `INSERT INTO segments (id, startAt, endAt, processName, title, note, todoId, kind)
+       VALUES (?,?,?,?,?,?,?,?)`
+    ).run('seg1', '2026-08-03T10:00:00Z', null, 'app.exe', '', '', 't1', 'activity')
+    db.prepare('DELETE FROM todos WHERE id = ?').run('t1')
+    const row = db.prepare('SELECT todoId FROM segments WHERE id = ?').get('seg1') as {
+      todoId: string | null
+    }
+    expect(row.todoId).toBeNull()
   })
 
   it('enables inserting a todo row with all required fields', () => {

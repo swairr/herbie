@@ -10,7 +10,10 @@ import {
 } from './todos'
 import { getSetting, setSetting, getAllSettings } from './settings'
 import { exportTodos } from './export'
-import type { SettingsKey, TodoFilter, TodoInput, TodoPatch } from '@shared/types'
+import { exportTime } from './export-time'
+import { listSegmentsByDay, updateSegment } from './segments-query'
+import { getTracker } from './tracker'
+import type { SettingsKey, TodoFilter, TodoInput, TodoPatch, SegmentPatch } from '@shared/types'
 
 function isHttpUrl(url: string): boolean {
   return /^https?:\/\//i.test(url)
@@ -35,6 +38,22 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.settings.getAll, () => getAllSettings())
 
   ipcMain.handle(IPC.export.exportMarkdown, () => exportTodos())
+
+  ipcMain.handle(IPC.segments.list, (_e, day: string) => listSegmentsByDay(day))
+  ipcMain.handle(IPC.segments.update, (_e, id: string, patch: SegmentPatch) =>
+    updateSegment(id, patch)
+  )
+  ipcMain.handle(IPC.time.export, (_e, day: string) => exportTime(day))
+
+  ipcMain.handle(IPC.tracker.getOffWork, () => {
+    const t = getTracker()
+    return { offWork: t ? t.getOffWork() : false }
+  })
+  ipcMain.handle(IPC.tracker.setOffWork, (_e, on: boolean) => {
+    const t = getTracker()
+    if (t) t.setOffWork(on)
+    return { offWork: t ? t.getOffWork() : false }
+  })
 
   ipcMain.handle(IPC.shell.openExternal, async (_e, url: string) => {
     if (isHttpUrl(url)) await shell.openExternal(url)

@@ -9,7 +9,8 @@
     "onlyBuiltDependencies": [
       "electron",
       "better-sqlite3",
-      "esbuild"
+      "esbuild",
+      "herbie-winhook"
     ]
   },
   "scripts": {
@@ -23,15 +24,18 @@
     "format": "prettier --write .",
     "test": "cross-env ELECTRON_RUN_AS_NODE=1 electron ./node_modules/vitest/dist/cli.js run",
     "test:watch": "cross-env ELECTRON_RUN_AS_NODE=1 electron ./node_modules/vitest/dist/cli.js",
-    "rebuild": "electron-rebuild -f -w better-sqlite3",
-    "postinstall": "electron-rebuild -f -w better-sqlite3",
+    "rebuild": "node scripts/rebuild.js",
+    "rebuild:sqlite": "electron-rebuild -f -w better-sqlite3",
+    "rebuild:native": "node scripts/rebuild.js --native",
+    "postinstall": "node scripts/rebuild.js",
     "build:installer": "electron-vite build && electron-builder",
     "start": "electron-vite preview"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^3.0.0",
-    "better-sqlite3": "^11.5.0"
+    "better-sqlite3": "^11.5.0",
+    "herbie-winhook": "file:native/herbie-winhook"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^1.0.1",
@@ -62,7 +66,9 @@
     "productName": "Herbie",
     "asar": true,
     "asarUnpack": [
-      "**/node_modules/better-sqlite3/**"
+      "**/node_modules/better-sqlite3/**",
+      "**/node_modules/herbie-winhook/**",
+      "**/native/herbie-winhook/build/**"
     ],
     "directories": {
       "output": "release"

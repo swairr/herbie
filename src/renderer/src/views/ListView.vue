@@ -14,6 +14,7 @@ const doneOpen = ref(false)
 const editing = ref<Record<string, { title: string; detail: string }>>({})
 const exporting = ref(false)
 const lastExport = ref<string | null>(null)
+const offWork = ref(false)
 
 const filter = computed<TodoFilter>(() => ({
   labels: selected.value.size ? Array.from(selected.value) : undefined
@@ -80,11 +81,24 @@ async function doExport(): Promise<void> {
   setTimeout(() => (lastExport.value = null), 3000)
 }
 
+async function loadOffWork(): Promise<void> {
+  const state = await window.api.tracker.getOffWork()
+  offWork.value = state.offWork
+}
+
+async function toggleOffWork(): Promise<void> {
+  const state = await window.api.tracker.setOffWork(!offWork.value)
+  offWork.value = state.offWork
+}
+
 function goSettings(): void {
   location.hash = '#/settings'
 }
 
-onMounted(refresh)
+onMounted(async () => {
+  await refresh()
+  await loadOffWork()
+})
 </script>
 
 <template>
@@ -92,6 +106,14 @@ onMounted(refresh)
     <header class="header">
       <h1>Herbie</h1>
       <div class="actions">
+        <button
+          class="offwork"
+          :class="{ active: offWork }"
+          :title="offWork ? '点击恢复记录' : '点击进入下班（停止记录）'"
+          @click="toggleOffWork"
+        >
+          {{ offWork ? '下班中' : '上班中' }}
+        </button>
         <button :disabled="exporting" @click="doExport">
           {{ exporting ? '导出中…' : '导出 Markdown' }}
         </button>
@@ -295,5 +317,16 @@ onMounted(refresh)
 }
 .done .row {
   cursor: default;
+}
+.offwork {
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.offwork.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 </style>

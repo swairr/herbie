@@ -15,6 +15,17 @@ export const IPC = {
   export: {
     exportMarkdown: 'export:exportMarkdown'
   },
+  segments: {
+    list: 'segments:list',
+    update: 'segments:update'
+  },
+  time: {
+    export: 'time:export'
+  },
+  tracker: {
+    getOffWork: 'tracker:getOffWork',
+    setOffWork: 'tracker:setOffWork'
+  },
   shell: {
     openExternal: 'shell:openExternal'
   },

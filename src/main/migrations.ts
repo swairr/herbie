@@ -1,4 +1,5 @@
 import sql0001 from '../../migrations/0001.sql?raw'
+import sql0002 from '../../migrations/0002.sql?raw'
 import Database from 'better-sqlite3'
 
 interface Migration {
@@ -6,7 +7,10 @@ interface Migration {
   sql: string
 }
 
-const migrations: Migration[] = [{ version: 1, sql: sql0001 }]
+const migrations: Migration[] = [
+  { version: 1, sql: sql0001 },
+  { version: 2, sql: sql0002 }
+]
 
 export function runMigrations(db: Database.Database): number {
   db.exec(`
