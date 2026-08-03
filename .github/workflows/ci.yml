@@ -33,9 +33,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Rebuild native modules (safety net)
-        run: node scripts/rebuild.js
-
       - name: Lint
         run: pnpm lint
 

@@ -9,8 +9,7 @@
     "onlyBuiltDependencies": [
       "electron",
       "better-sqlite3",
-      "esbuild",
-      "herbie-winhook"
+      "esbuild"
     ]
   },
   "scripts": {

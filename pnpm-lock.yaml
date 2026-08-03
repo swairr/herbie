@@ -17,6 +17,9 @@ importers:
       better-sqlite3:
         specifier: ^11.5.0
         version: 11.10.0
+      herbie-winhook:
+        specifier: file:native/herbie-winhook
+        version: file:native/herbie-winhook
     devDependencies:
       '@electron-toolkit/tsconfig':
         specifier: ^1.0.1
@@ -1608,6 +1611,9 @@ packages:
     resolution: {integrity: sha512-F/1DnUGPopORZi0ni+CvrCgHQ5FyEAHRLSApuYWMmrbSwoN2Mn/7k+Gl38gJnR7yyDZk6WLXwiGod1JOWNDKGw==}
     hasBin: true
 
+  herbie-winhook@file:native/herbie-winhook:
+    resolution: {directory: native/herbie-winhook, type: directory}
+
   hosted-git-info@4.1.0:
     resolution: {integrity: sha512-kyCuEOWjJqZuDbRHzL8V93NzQhwIB71oFWSyzVo+KPZI+pnQPPxucdkrOZvkLRnrf5URsQM+IJ09Dw29cRALIA==}
     engines: {node: '>=10'}
@@ -1980,6 +1986,10 @@ packages:
 
   node-addon-api@1.7.2:
     resolution: {integrity: sha512-ibPK3iA+vaY1eEjESkQkM0BbCqFOaZMiXRTtdB0u7b4djtY6JnsjvPdUHVMg6xQt3B8fpTTWHI9A+ADjM9frzg==}
+
+  node-addon-api@8.9.1:
+    resolution: {integrity: sha512-4eUQWVPCUUUiBjLnHS3cXWeC6ryoPUc0U3rP7IuzapoGbzMqd/r6KKO0clr0b+snQhsrueFEhCZDdK+LK7hxKg==}
+    engines: {node: ^18 || ^20 || >= 21}
 
   node-api-version@0.2.1:
     resolution: {integrity: sha512-2xP/IGGMmmSQpI1+O/k72jF/ykvZ89JeuKX3TLJAYPDVLUalrshrLHkeVcCCZqG/eEa635cr8IBYzgnDvM2O8Q==}
@@ -4449,6 +4459,10 @@ snapshots:
 
   he@1.2.0: {}
 
+  herbie-winhook@file:native/herbie-winhook:
+    dependencies:
+      node-addon-api: 8.9.1
+
   hosted-git-info@4.1.0:
     dependencies:
       lru-cache: 6.0.0
@@ -4787,6 +4801,8 @@ snapshots:
 
   node-addon-api@1.7.2:
     optional: true
+
+  node-addon-api@8.9.1: {}
 
   node-api-version@0.2.1:
     dependencies:
