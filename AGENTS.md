@@ -20,8 +20,8 @@
 
 ## 架构
 
-- 行为的事实来源:`docs/milestone-1-requirements.md` 与实现计划。`CONTEXT.md` 定义领域
-  术语表（Todo / Label / Quick Add）。
+- 行为的事实来源:`docs/milestone-*-requirements.md` 与实现计划。`CONTEXT.md` 定义领域
+  术语表（Todo / Label / Quick Add / Activity Segment / Journal Entry 等）。
 - Electron 主进程持有 `better-sqlite3` 单例及所有持久化逻辑。Renderer 不接触 Node。
   `contextIsolation: true`、`sandbox: true`、`nodeIntegration: false`。
 - `src/main/db-access.ts` 是一个 **不依赖 Electron** 的 DB 单例持有者,使得各仓库
