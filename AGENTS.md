@@ -1,58 +1,58 @@
-# Herbie — Agent Notes
+# H.E.R.B.I.E — Agent 说明
 
-## Commands
+## 语言
 
-- `pnpm dev` — run the app in development.
-- `pnpm build` — type-check + build main/preload/renderer to `out/`.
-- `pnpm typecheck` — type-check main/preload (`tsc`) and renderer (`vue-tsc`); no emit.
-- `pnpm lint` — ESLint over `src/` and `tests/` (flat config, `eslint.config.js`).
-- `pnpm test` — run Vitest unit + integration tests once. Tests run **under Electron as
-  Node** (`ELECTRON_RUN_AS_NODE=1 electron ...vitest`) so the Electron-built
-  `better-sqlite3` native module (ABI for Electron's Node) loads. Running plain
-  `vitest` under system Node fails on the native module ABI — use `pnpm test`.
-- `pnpm test:watch` — Vitest watch mode (also under Electron).
-- `pnpm rebuild` — rebuild `better-sqlite3` native module against the installed Electron.
-- `pnpm build:installer` — build + package installer via electron-builder.
+所有回复、解释、计划清单必须使用中文（代码、专业术语和文件名除外）。
 
-## Architecture
+## 命令
 
-- Source of truth for behavior: `docs/milestone-1-requirements.md` and the implementation
-  plan. `CONTEXT.md` defines the domain glossary (Todo / Label / Quick Add).
-- Electron main process owns the `better-sqlite3` singleton and all persistence logic.
-  Renderer never touches Node. `contextIsolation: true`, `sandbox: true`,
-  `nodeIntegration: false`.
-- `src/main/db-access.ts` is an **Electron-free** holder of the DB singleton so the repos
-  (`todos`, `settings`, `labels-store`, `export`) can be unit-tested in pure Node via an
-  in-memory `new Database(':memory:')` + `runMigrations`. `src/main/db.ts` is the only
-  Electron-bound module (`app.getPath`) and seeds the singleton via `setDb` on ready.
-- Shared pure code (`src/shared/`) is imported by both main and renderer (labels, time,
-  markdown). Keep these dependency-free and unit-tested.
-- Migrations live in `migrations/` as ordered SQL files (embedded via `?raw`); applied at
-  startup by the migrations runner in `src/main/migrations.ts`, which accepts a `Database`
-  so tests can call it directly.
+- `pnpm dev` — 以开发模式运行应用。
+- `pnpm build` — 类型检查 + 将 main/preload/renderer 构建到 `out/`。
+- `pnpm typecheck` — 对 main/preload (`tsc`) 与 renderer (`vue-tsc`) 做类型检查;不产出文件。
+- `pnpm lint` — 对 `src/` 与 `tests/` 跑 ESLint（flat config,`eslint.config.js`）。
+- `pnpm test` — 跑一次 Vitest 单元 + 集成测试。测试在 **Electron 作为 Node 运行**
+  （`ELECTRON_RUN_AS_NODE=1 electron ...vitest`）,这样为 Electron 的 Node 编译的
+  `better-sqlite3` 原生模块（ABI 匹配 Electron 的 Node）才能加载。在系统 Node 下直接跑
+  `vitest` 会因原生模块 ABI 不匹配而失败 —— 请用 `pnpm test`。
+- `pnpm test:watch` — Vitest watch 模式（同样在 Electron 下运行）。
+- `pnpm rebuild` — 针对已安装的 Electron 重新构建 `better-sqlite3` 原生模块。
+- `pnpm build:installer` — 构建并通过 electron-builder 打包安装器。
 
-## Deviation from requirements
+## 架构
 
-`milestone-1-requirements.md` §5 asks for auto-export on startup. The user overrode this to
-**manual-only export**. Do NOT add an export call in `app.whenReady`. The single
-attach point to re-enable auto-export is in `src/main/index.ts` (see comment).
+- 行为的事实来源:`docs/milestone-1-requirements.md` 与实现计划。`CONTEXT.md` 定义领域
+  术语表（Todo / Label / Quick Add）。
+- Electron 主进程持有 `better-sqlite3` 单例及所有持久化逻辑。Renderer 不接触 Node。
+  `contextIsolation: true`、`sandbox: true`、`nodeIntegration: false`。
+- `src/main/db-access.ts` 是一个 **不依赖 Electron** 的 DB 单例持有者,使得各仓库
+  （`todos`、`settings`、`labels-store`、`export`）能在纯 Node 环境下通过内存数据库
+  `new Database(':memory:')` + `runMigrations` 做单元测试。`src/main/db.ts` 是唯一绑定
+  Electron 的模块（用到 `app.getPath`),在 ready 时通过 `setDb` 注入单例。
+- 共享纯代码（`src/shared/`）被 main 与 renderer 共同引用（labels、time、markdown）。
+  保持它们无依赖且有单元测试。
+- 迁移以有序 SQL 文件形式位于 `migrations/`（通过 `?raw` 内嵌）;在启动时由
+  `src/main/migrations.ts` 中的迁移运行器执行,后者接受一个 `Database` 参数,因此测试
+  可直接调用。
 
-## Milestone 2 — time tracking
+## 与需求的偏差
 
-- **Native module `herbie-winhook`** is an in-tree N-API module under
-  `native/herbie-winhook/` (Windows-only, C++ + `node-addon-api`). It is wired as a local
-  file dependency in `package.json` and listed in `pnpm.onlyBuiltDependencies`. Building it
-  requires **Visual Studio Build Tools (C++) + Python** and is compiled by
-  `electron-rebuild` during `postinstall` / `pnpm rebuild`. Required native libs:
-  `user32`, `psapi`, `kernel32` (declared in `binding.gyp`).
-- If the native module is absent or fails to build, `loadWinHook()` in `src/main/index.ts`
-  degrades to a no-op notifier and the app keeps running **without segment recording** —
-  this is intentional for cross-platform dev.
-- **Tray residency change**: milestone 2 makes the app stay in the tray when the last
-  window is closed (`window-all-closed` now hides the main window instead of quitting on
-  Windows). Quit only happens via the tray 退出 item (`before-quit` tears down tracking +
-  closes the DB). This is a behavior change from milestone 1.
-- Segment tracking lives in `src/main/segments.ts` (state machine) + `src/main/tracker.ts`
-  (idle poll + off-work, **dependency-injected** so it stays unit-testable). Aggregation is
-  pure in `src/shared/segments-agg.ts`; day slicing is pure in `src/shared/time.ts`
-  (`splitAtMidnight`). `powerMonitor` must only be touched inside `app.whenReady`.
+`milestone-1-requirements.md` §5 要求启动时自动导出。用户已改写为 **仅手动导出**。不要在
+`app.whenReady` 中加入导出调用。重新启用自动导出的唯一接入点在 `src/main/index.ts`
+（见注释）。
+
+## 里程碑 2 — 时间追踪
+
+- **原生模块 `herbie-winhook`** 是位于 `native/herbie-winhook/` 的树内 N-API 模块
+  （仅 Windows,C++ + `node-addon-api`）。它作为本地文件依赖接入 `package.json`,并列入
+  `pnpm.onlyBuiltDependencies`。构建它需要 **Visual Studio Build Tools (C++) + Python**,
+  并在 `postinstall` / `pnpm rebuild` 时由 `electron-rebuild` 编译。所需原生库:
+  `user32`、`psapi`、`kernel32`（在 `binding.gyp` 中声明）。
+- 若原生模块缺失或构建失败,`src/main/index.ts` 中的 `loadWinHook()` 会降级为空操作通知器,
+  应用继续运行 **但不记录 segment** —— 这是为了跨平台开发而有意为之。
+- **驻留托盘的行为变更**:里程碑 2 让应用在最后一个窗口被关闭时停留在托盘中
+  （`window-all-closed` 现在在 Windows 上是隐藏主窗口而非退出）。退出只通过托盘的 退出
+  项发生（`before-quit` 会拆除追踪 + 关闭 DB）。这是相对里程碑 1 的行为变更。
+- Segment 追踪位于 `src/main/segments.ts`（状态机）+ `src/main/tracker.ts`
+  （空闲轮询 + 下班,**依赖注入** 以保持可单元测试）。聚合在 `src/shared/segments-agg.ts`
+  中为纯函数;跨天切分在 `src/shared/time.ts` 中为纯函数（`splitAtMidnight`）。
+  `powerMonitor` 只能 `app.whenReady` 内部触碰。
