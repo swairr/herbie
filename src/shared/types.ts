@@ -69,6 +69,32 @@ export interface TimeExportResult extends ExportResult {
   day?: string
 }
 
+export interface JournalEntry {
+  id: string
+  title: string | null
+  body: string
+  date: string
+  createdAt: string
+  updatedAt: string
+  deletedAt: string | null
+}
+
+export interface JournalInput {
+  title?: string | null
+  body: string
+  date?: string
+}
+
+export interface JournalPatch {
+  title?: string | null
+  body?: string
+  date?: string
+}
+
+export interface JournalExportResult extends ExportResult {
+  day?: string
+}
+
 export interface Api {
   todos: {
     list: (filter?: TodoFilter) => Promise<Todo[]>
@@ -92,6 +118,13 @@ export interface Api {
   }
   time: {
     export: (day: string) => Promise<TimeExportResult>
+  }
+  journal: {
+    list: (day: string) => Promise<JournalEntry[]>
+    create: (input: JournalInput) => Promise<JournalEntry>
+    update: (id: string, patch: JournalPatch) => Promise<JournalEntry>
+    softDelete: (id: string) => Promise<void>
+    export: (day: string) => Promise<JournalExportResult>
   }
   tracker: {
     getOffWork: () => Promise<OffWorkState>

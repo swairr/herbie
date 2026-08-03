@@ -11,9 +11,19 @@ import {
 import { getSetting, setSetting, getAllSettings } from './settings'
 import { exportTodos } from './export'
 import { exportTime } from './export-time'
+import { exportJournal } from './export-journal'
 import { listSegmentsByDay, updateSegment } from './segments-query'
+import { listJournals, createJournal, updateJournal, softDeleteJournal } from './journals'
 import { getTracker } from './tracker'
-import type { SettingsKey, TodoFilter, TodoInput, TodoPatch, SegmentPatch } from '@shared/types'
+import type {
+  SettingsKey,
+  TodoFilter,
+  TodoInput,
+  TodoPatch,
+  SegmentPatch,
+  JournalInput,
+  JournalPatch
+} from '@shared/types'
 
 function isHttpUrl(url: string): boolean {
   return /^https?:\/\//i.test(url)
@@ -44,6 +54,17 @@ export function registerIpcHandlers(): void {
     updateSegment(id, patch)
   )
   ipcMain.handle(IPC.time.export, (_e, day: string) => exportTime(day))
+
+  ipcMain.handle(IPC.journal.list, (_e, day: string) => listJournals(day))
+  ipcMain.handle(IPC.journal.create, (_e, input: JournalInput) => createJournal(input))
+  ipcMain.handle(IPC.journal.update, (_e, id: string, patch: JournalPatch) =>
+    updateJournal(id, patch)
+  )
+  ipcMain.handle(IPC.journal.softDelete, (_e, id: string) => {
+    softDeleteJournal(id)
+    return undefined
+  })
+  ipcMain.handle(IPC.journal.export, (_e, day: string) => exportJournal(day))
 
   ipcMain.handle(IPC.tracker.getOffWork, () => {
     const t = getTracker()

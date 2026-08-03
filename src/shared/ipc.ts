@@ -22,6 +22,13 @@ export const IPC = {
   time: {
     export: 'time:export'
   },
+  journal: {
+    list: 'journal:list',
+    create: 'journal:create',
+    update: 'journal:update',
+    softDelete: 'journal:softDelete',
+    export: 'journal:export'
+  },
   tracker: {
     getOffWork: 'tracker:getOffWork',
     setOffWork: 'tracker:setOffWork'

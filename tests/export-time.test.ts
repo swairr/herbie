@@ -15,7 +15,7 @@ async function tempDir(): Promise<string> {
 describe('export-time', () => {
   it('buildTimeContent renders segments stored for the day', () => {
     makeDb()
-    openSegment({ processName: 'app.exe', title: 'Main' })
+    openSegment({ processName: 'app.exe', title: 'Main', startAt: '2026-08-03T09:00:00' })
     // close it immediately with a fixed timestamp so the day query stays deterministic
     closeOpen('2026-08-03T10:30:00')
     const content = buildTimeContent('2026-08-03')

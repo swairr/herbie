@@ -32,9 +32,10 @@ describe('runMigrations', () => {
     const rows = db.prepare('SELECT version FROM migrations ORDER BY version').all() as {
       version: number
     }[]
-    expect(rows).toHaveLength(2)
+    expect(rows).toHaveLength(3)
     expect(rows[0].version).toBe(1)
     expect(rows[1].version).toBe(2)
+    expect(rows[2].version).toBe(3)
   })
 
   it('creates the segments table (v2) and records version 2', () => {
@@ -106,6 +107,47 @@ describe('runMigrations', () => {
     db.prepare('INSERT INTO todo_labels (todoId, label) VALUES (?, ?)').run('id1', 'work')
     db.prepare('DELETE FROM todos WHERE id = ?').run('id1')
     const remain = db.prepare('SELECT COUNT(*) AS n FROM todo_labels').get() as { n: number }
+    expect(remain.n).toBe(0)
+  })
+
+  it('creates the journal_entries table (v3) and records version 3', () => {
+    runMigrations(db)
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .all() as { name: string }[]
+    expect(tables.map((t) => t.name)).toContain('journal_entries')
+    expect(tables.map((t) => t.name)).toContain('journal_labels')
+    const v3 = db.prepare('SELECT version FROM migrations WHERE version = 3').get() as
+      | { version: number }
+      | undefined
+    expect(v3?.version).toBe(3)
+  })
+
+  it('journal_entries accepts a row with optional null title', () => {
+    runMigrations(db)
+    db.prepare(
+      `INSERT INTO journal_entries (id, title, body, date, createdAt, updatedAt, deletedAt)
+       VALUES (?,?,?,?,?,?,?)`
+    ).run('j1', null, '日记正文', '2026-08-04', '2026-08-04T10:00:00Z', '2026-08-04T10:00:00Z', null)
+    const row = db.prepare('SELECT * FROM journal_entries WHERE id = ?').get('j1') as {
+      title: string | null
+      body: string
+      date: string
+    }
+    expect(row.title).toBeNull()
+    expect(row.body).toBe('日记正文')
+    expect(row.date).toBe('2026-08-04')
+  })
+
+  it('cascades journal delete to journal_labels', () => {
+    runMigrations(db)
+    db.prepare(
+      `INSERT INTO journal_entries (id, title, body, date, createdAt, updatedAt, deletedAt)
+       VALUES (?,?,?,?,?,?,?)`
+    ).run('j1', null, 'b', '2026-08-04', '2026-08-04T10:00:00Z', '2026-08-04T10:00:00Z', null)
+    db.prepare('INSERT INTO journal_labels (journalId, label) VALUES (?, ?)').run('j1', 'work')
+    db.prepare('DELETE FROM journal_entries WHERE id = ?').run('j1')
+    const remain = db.prepare('SELECT COUNT(*) AS n FROM journal_labels').get() as { n: number }
     expect(remain.n).toBe(0)
   })
 })

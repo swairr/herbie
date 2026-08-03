@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import ListView from './views/ListView.vue'
 import TimeView from './views/TimeView.vue'
+import JournalView from './views/JournalView.vue'
 import SettingsView from './views/SettingsView.vue'
 import QuickAddView from './views/QuickAddView.vue'
 
@@ -18,12 +19,13 @@ onMounted(() => {
   })
 })
 
-const showTabs = computed(() => route.value === 'main' || route.value === 'time')
+const showTabs = computed(() => route.value === 'main' || route.value === 'time' || route.value === 'journal')
 
 const view = computed(() => {
   if (route.value === 'quickadd') return QuickAddView
   if (route.value === 'settings') return SettingsView
   if (route.value === 'time') return TimeView
+  if (route.value === 'journal') return JournalView
   return ListView
 })
 
@@ -38,6 +40,7 @@ function goTo(r: string): void {
     <nav v-if="showTabs" class="tabs">
       <button :class="{ active: route === 'main' }" @click="goTo('main')">待办</button>
       <button :class="{ active: route === 'time' }" @click="goTo('time')">时间</button>
+      <button :class="{ active: route === 'journal' }" @click="goTo('journal')">日志</button>
     </nav>
     <component :is="view" />
   </template>
