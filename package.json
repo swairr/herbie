@@ -29,6 +29,7 @@
     "rebuild:native": "node scripts/rebuild.js --native",
     "postinstall": "node scripts/rebuild.js",
     "build:installer": "electron-vite build && electron-builder",
+    "build:dir": "electron-vite build && electron-builder --win dir",
     "start": "electron-vite preview"
   },
   "dependencies": {
