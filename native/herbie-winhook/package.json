@@ -4,7 +4,6 @@
   "description": "Windows foreground window event hook for Herbie (in-tree N-API native module).",
   "main": "index.js",
   "types": "index.d.ts",
-  "gypfile": true,
   "dependencies": {
     "node-addon-api": "^8.0.0"
   }

@@ -22,7 +22,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # Node 20 is EOL (Apr 2026). @electron/rebuild@4 (which replaces the stale
+          # @electron/node-gyp fork that couldn't detect VS 2026) and its transitive
+          # node-abi@4 require node >=22.12, so pin the current LTS.
+          node-version: '22'
           cache: 'pnpm'
 
       - name: Install Electron shared libraries (Linux)
@@ -57,7 +60,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'pnpm'
 
       - name: Install dependencies

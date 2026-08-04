@@ -5,6 +5,10 @@
 //                                      it is skipped and index.js degrades to a no-op at
 //                                      runtime, keeping `pnpm install` green (AGENTS.md).
 //   node scripts/rebuild.js --native -> rebuild herbie-winhook only (Windows).
+// Note: @electron/rebuild@4 split `-w/--which-module` (non-exclusive) from
+// `-o/--only` (exclusive). We use `-o` so rebuilding better-sqlite3 does NOT also
+// pull in the Windows-only herbie-winhook (which would fail with `windows.h` on
+// Linux and with `napi.h` when its node-addon-api include dir is not resolvable).
 const { spawnSync } = require('node:child_process')
 
 function run(args) {
@@ -18,7 +22,7 @@ const nativeTargets = process.platform === 'win32' ? ['herbie-winhook'] : []
 let failed = false
 
 if (!onlyNative) {
-  const code = run(['-w', 'better-sqlite3'])
+  const code = run(['-o', 'better-sqlite3'])
   if (code !== 0) {
     console.error(`electron-rebuild better-sqlite3 failed (exit ${code})`)
     failed = true
@@ -26,7 +30,7 @@ if (!onlyNative) {
 }
 
 for (const mod of nativeTargets) {
-  const code = run(['-w', mod])
+  const code = run(['-o', mod])
   if (code !== 0) {
     console.error(`electron-rebuild ${mod} failed (exit ${code})`)
     // A missing VS Build Tools toolchain for herbie-winhook should not break install on
