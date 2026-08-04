@@ -66,17 +66,30 @@
     "productName": "Herbie",
     "asar": true,
     "npmRebuild": false,
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
+    "compression": "maximum",
     "asarUnpack": [
-      "**/node_modules/better-sqlite3/**",
-      "**/node_modules/herbie-winhook/**",
-      "**/native/herbie-winhook/build/**"
+      "**/*.node"
     ],
     "directories": {
       "output": "release"
     },
     "files": [
       "out/**/*",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      "!**/node_modules/better-sqlite3/deps/**",
+      "!**/node_modules/better-sqlite3/src/**",
+      "!**/node_modules/herbie-winhook/bin/**",
+      "!**/node_modules/herbie-winhook/index.cpp",
+      "!**/node_modules/herbie-winhook/binding.gyp",
+      "!**/*.iobj",
+      "!**/*.ipdb",
+      "!**/*.lib",
+      "!**/*.tlog",
+      "!**/*.vcxproj*"
     ],
     "win": {
       "target": [
