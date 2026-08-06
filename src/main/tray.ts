@@ -1,5 +1,5 @@
 import { app, Tray, Menu, nativeImage } from 'electron'
-import { getMainWindow } from './windows'
+import { showMainWindow } from './windows'
 import { getTracker } from './tracker'
 
 let tray: Tray | null = null
@@ -33,11 +33,7 @@ function refreshMenu(): void {
       {
         label: '显示主窗口',
         click: () => {
-          const w = getMainWindow()
-          if (w) {
-            w.show()
-            w.focus()
-          }
+          showMainWindow()
         }
       },
       {
@@ -56,11 +52,7 @@ export function createTray(): Tray {
   tray.setToolTip('Herbie')
   refreshMenu()
   tray.on('click', () => {
-    const w = getMainWindow()
-    if (w) {
-      w.show()
-      w.focus()
-    }
+    showMainWindow()
     refreshMenu()
   })
   return tray

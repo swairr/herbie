@@ -52,7 +52,20 @@ export function createMainWindow(): BrowserWindow {
 }
 
 export function getMainWindow(): BrowserWindow | null {
+  if (mainWindow?.isDestroyed()) {
+    mainWindow = null
+  }
   return mainWindow
+}
+
+export function showMainWindow(): void {
+  const w = getMainWindow()
+  if (!w) {
+    createMainWindow()
+    return
+  }
+  w.show()
+  w.focus()
 }
 
 export function getOrCreateQuickAddWindow(): BrowserWindow {

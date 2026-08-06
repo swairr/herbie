@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, powerMonitor } from 'electron'
+import { app, ipcMain, powerMonitor } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { initDb, closeDb } from './db'
 import { createMainWindow, getOrCreateQuickAddWindow, getMainWindow } from './windows'
@@ -84,7 +84,7 @@ app.whenReady().then(() => {
   registerShortcut()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
+    if (!getMainWindow()) createMainWindow()
   })
 })
 
