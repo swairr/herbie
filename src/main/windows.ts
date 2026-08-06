@@ -4,6 +4,8 @@ import { is } from '@electron-toolkit/utils'
 
 let mainWindow: BrowserWindow | null = null
 let quickAddWindow: BrowserWindow | null = null
+let quickAddReady = false
+let quickAddShowPending = false
 
 function outDir(): string {
   return join(app.getAppPath(), 'out')
@@ -66,6 +68,16 @@ export function getOrCreateQuickAddWindow(): BrowserWindow {
     skipTaskbar: true,
     webPreferences: baseWebPrefs() as any
   })
+  quickAddReady = false
+  quickAddShowPending = false
+
+  quickAddWindow.webContents.once('did-finish-load', () => {
+    quickAddReady = true
+    if (quickAddShowPending && quickAddWindow && !quickAddWindow.isDestroyed()) {
+      quickAddShowPending = false
+      showQuickAddWindow(quickAddWindow)
+    }
+  })
 
   quickAddWindow.on('blur', () => {
     // Notify the renderer so it can flush its draft, then it requests hide.
@@ -81,11 +93,24 @@ export function getOrCreateQuickAddWindow(): BrowserWindow {
   return quickAddWindow
 }
 
-export function showQuickAdd(): void {
-  const w = getOrCreateQuickAddWindow()
+function showQuickAddWindow(w: BrowserWindow): void {
   w.show()
   w.focus()
-  w.webContents.send('quickadd:show')
+  setTimeout(() => {
+    if (w.isDestroyed()) return
+    w.focus()
+    w.webContents.focus()
+    w.webContents.send('quickadd:show')
+  }, 0)
+}
+
+export function showQuickAdd(): void {
+  const w = getOrCreateQuickAddWindow()
+  if (!quickAddReady) {
+    quickAddShowPending = true
+    return
+  }
+  showQuickAddWindow(w)
 }
 
 export function hideQuickAdd(): void {

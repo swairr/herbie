@@ -3,6 +3,7 @@ import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { parseLabels } from '@shared/labels'
 
 const title = ref('')
+const titleInput = ref<HTMLInputElement | null>(null)
 const detail = ref('')
 const placeholder = ref('')
 const clipboardFilled = ref(false)
@@ -46,10 +47,23 @@ async function wake(): Promise<void> {
 }
 
 function focusTitle(): void {
-  setTimeout(() => {
-    const el = document.querySelector<HTMLInputElement>('#qa-title')
-    el?.focus()
-  }, 0)
+  const attempt = (remaining = 10): void => {
+    const el = titleInput.value
+    if (!el) return
+
+    const active = document.activeElement
+    if (active && active !== document.body && active !== document.documentElement && active !== el) {
+      return
+    }
+
+    window.focus()
+    el.focus({ preventScroll: true })
+    if (document.activeElement !== el && remaining > 0) {
+      setTimeout(() => attempt(remaining - 1), 16)
+    }
+  }
+
+  setTimeout(() => attempt(), 0)
 }
 
 function onTab(e: KeyboardEvent): void {
@@ -61,7 +75,7 @@ function onTab(e: KeyboardEvent): void {
     clipboardFilled.value = true
     dirty.value = true
     e.preventDefault()
-    const el = document.querySelector<HTMLInputElement>('#qa-title')
+    const el = titleInput.value
     el?.focus()
     const len = title.value.length
     el?.setSelectionRange(len, len)
@@ -112,6 +126,7 @@ function parsedLabels(): string[] {
 }
 
 function onShow(): void {
+  focusTitle()
   void wake()
 }
 function onHide(): void {
@@ -147,7 +162,9 @@ onBeforeUnmount(() => {
 <template>
   <div class="qa" :class="{ shake: shaking }">
     <input
+      ref="titleInput"
       id="qa-title"
+      autofocus
       v-model="title"
       :placeholder="placeholder ? '剪贴板：' + placeholder : '输入标题，Enter 提交'"
       @input="markDirty"
