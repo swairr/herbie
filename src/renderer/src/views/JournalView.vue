@@ -161,12 +161,13 @@ onMounted(refresh)
         <h3>{{ editor.id ? '编辑日志' : '新建日志' }}</h3>
         <label class="field">
           <span>标题（可选）</span>
-          <input v-model="editor.title" placeholder="无标题则以正文首行展示" />
+          <input v-model="editor.title" spellcheck="false" placeholder="无标题则以正文首行展示" />
         </label>
         <label class="field">
           <span>正文（必填）</span>
           <textarea
             v-model="editor.body"
+            spellcheck="false"
             rows="8"
             placeholder="记录思考、会议纪要…#标签 自动识别"
           ></textarea>

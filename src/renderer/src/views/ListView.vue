@@ -151,8 +151,8 @@ onMounted(async () => {
         </div>
 
         <div v-if="expanded.has(t.id)" class="edit" @click.stop>
-          <input v-model="editing[t.id]!.title" placeholder="标题" />
-          <textarea v-model="editing[t.id]!.detail" rows="4" placeholder="详情，#标签 自动识别"></textarea>
+          <input v-model="editing[t.id]!.title" spellcheck="false" placeholder="标题" />
+          <textarea v-model="editing[t.id]!.detail" spellcheck="false" rows="4" placeholder="详情，#标签 自动识别"></textarea>
           <div class="edit-actions">
             <span v-if="labelList(t).length" class="hint">将解析标签：{{ labelList(t).join(', ') }}</span>
             <div>

@@ -166,12 +166,14 @@ onBeforeUnmount(() => {
       id="qa-title"
       autofocus
       v-model="title"
+      spellcheck="false"
       :placeholder="placeholder ? '剪贴板：' + placeholder : '输入标题，Enter 提交'"
       @input="markDirty"
     />
     <textarea
       id="qa-detail"
       v-model="detail"
+      spellcheck="false"
       rows="3"
       placeholder="详情（#标签 自动识别）"
       @input="markDirty"

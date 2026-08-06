@@ -205,11 +205,11 @@ onMounted(refresh)
         <h3>编辑片段</h3>
         <label class="field">
           <span>备注</span>
-          <textarea v-model="editNote" rows="3" placeholder="为这段时间加一句说明"></textarea>
+          <textarea v-model="editNote" spellcheck="false" rows="3" placeholder="为这段时间加一句说明"></textarea>
         </label>
         <label class="field">
           <span>关联 Todo</span>
-          <input v-model="todoQuery" placeholder="搜索 Todo…" @focus="todoMenuOpen = true" />
+          <input v-model="todoQuery" spellcheck="false" placeholder="搜索 Todo…" @focus="todoMenuOpen = true" />
           <div v-if="todoMenuOpen" class="todo-menu">
             <button v-for="t in filteredTodoOptions" :key="t.id" @click="pickTodo(t)">
               {{ t.title }}

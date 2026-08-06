@@ -46,14 +46,14 @@ onMounted(load)
     <section class="form">
       <label class="field">
         <span>快捷键</span>
-        <input v-model="shortcut" placeholder="Ctrl+Shift+Space" />
+        <input v-model="shortcut" spellcheck="false" placeholder="Ctrl+Shift+Space" />
       </label>
       <p v-if="shortcutError" class="error">{{ shortcutError }}</p>
 
       <label class="field">
         <span>导出目录</span>
         <div class="dir-row">
-          <input v-model="exportDir" placeholder="留空则在应用数据目录导出" />
+          <input v-model="exportDir" spellcheck="false" placeholder="留空则在应用数据目录导出" />
           <button @click="pickDir">选择…</button>
         </div>
       </label>
