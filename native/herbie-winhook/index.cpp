@@ -90,10 +90,20 @@ static void EmitEvent(const char* type, HWND hwnd) {
   lastTitle = title;
   uintptr_t hwndVal = reinterpret_cast<uintptr_t>(hwnd);
   g_tsf.NonBlockingCall([typeStr, hwndVal, proc, title](Env env, Function js) {
-    js.Call({ String::New(env, typeStr),
-              Number::New(env, (double)hwndVal),
-              String::New(env, proc),
-              String::New(env, title) });
+    try {
+      Object event = Object::New(env);
+      event.Set("type", String::New(env, typeStr));
+      event.Set("hwnd", Number::New(env, (double)hwndVal));
+      event.Set("processName", String::New(env, proc));
+      event.Set("title", String::New(env, title));
+      js.Call({event});
+    } catch (const Napi::Error& error) {
+      // Never allow a JavaScript exception to escape a ThreadSafeFunction callback.
+      // Node otherwise reports DEP0168 and the exception may terminate the process.
+      error.ThrowAsJavaScriptException();
+    } catch (...) {
+      Napi::Error::New(env, "herbie-winhook callback failed").ThrowAsJavaScriptException();
+    }
   });
 }
 

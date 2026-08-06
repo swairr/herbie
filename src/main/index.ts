@@ -7,6 +7,7 @@ import { registerShortcut, unregisterShortcut, reregisterShortcut } from './shor
 import { createTray, refreshTrayMenu } from './tray'
 import { startTracking, stopTracking, type HookNotifier, type WinHookEvent } from './segments'
 import { createTracker, setTrackerInstance, type TrackerDeps } from './tracker'
+import { normalizeWinHookEvent } from './win-hook-event'
 import { IPC } from '@shared/ipc'
 
 // Single attach point to re-enable auto-export-on-startup (deliberately disabled —
@@ -20,10 +21,23 @@ function loadWinHook(): HookNotifier {
     // the rest of the app keeps working without segment recording.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mod = require('herbie-winhook') as {
-      start: (cb: (e: WinHookEvent) => void) => void
+      start: (
+        cb: (
+          eventOrType: WinHookEvent | WinHookEvent['type'],
+          hwnd?: number,
+          processName?: string,
+          title?: string
+        ) => void
+      ) => void
       stop: () => void
     }
-    return { start: (cb) => mod.start(cb), stop: () => mod.stop() }
+    return {
+      start: (cb) =>
+        mod.start((eventOrType, hwnd, processName, title) => {
+          cb(normalizeWinHookEvent(eventOrType, hwnd, processName, title))
+        }),
+      stop: () => mod.stop()
+    }
   } catch {
     return { start() {}, stop() {} }
   }

@@ -71,24 +71,29 @@ export function startTracking(notifier: HookNotifier): void {
   let openProcess = ''
   let openTitle = ''
   notifier.start((e) => {
-    // NAMECHANGE is only meaningful for the window currently in the foreground; ignore
-    // stray events for the previous foreground hwnd that may arrive late.
-    if (e.type === 'namechange' && currentHwnd !== e.hwnd) return
-    // Dedup: a chatty foreground window can emit identical (process,title) events
-    // repeatedly. Don't close+reopen a segment when nothing changed — avoids write
-    // amplification and thousands of 1-row fragments.
-    if (
-      e.type === 'namechange' &&
-      e.processName === openProcess &&
-      (e.title === openTitle || e.title === '')
-    ) {
-      return
+    try {
+      // NAMECHANGE is only meaningful for the window currently in the foreground; ignore
+      // stray events for the previous foreground hwnd that may arrive late.
+      if (e.type === 'namechange' && currentHwnd !== e.hwnd) return
+      // Dedup: a chatty foreground window can emit identical (process,title) events
+      // repeatedly. Don't close+reopen a segment when nothing changed — avoids write
+      // amplification and thousands of 1-row fragments.
+      if (
+        e.type === 'namechange' &&
+        e.processName === openProcess &&
+        (e.title === openTitle || e.title === '')
+      ) {
+        return
+      }
+      currentHwnd = e.hwnd
+      closeOpen(nowIso())
+      openSegment({ processName: e.processName, title: e.title })
+      openProcess = e.processName
+      openTitle = e.title
+    } catch (error) {
+      // Native ThreadSafeFunction callbacks must not let business errors escape into N-API.
+      console.error('[segments] failed to process native window event', error)
     }
-    currentHwnd = e.hwnd
-    closeOpen(nowIso())
-    openSegment({ processName: e.processName, title: e.title })
-    openProcess = e.processName
-    openTitle = e.title
   })
 }
 

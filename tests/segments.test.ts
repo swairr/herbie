@@ -108,4 +108,19 @@ describe('segments business layer', () => {
     const rows = listAllSegments()
     expect(rows[0].endAt).toBe('2026-08-03T12:00:00Z')
   })
+
+  it('isolates event-handler errors from the native callback boundary', () => {
+    const hook = fakeNotifier()
+    startTracking(hook)
+    hook.emit({ type: 'foreground', hwnd: 1, processName: 'a.exe', title: 'A' })
+    resetDb()
+
+    const originalError = console.error
+    console.error = () => undefined
+    try {
+      expect(() => hook.emit({ type: 'foreground', hwnd: 2, processName: 'b.exe', title: 'B' })).not.toThrow()
+    } finally {
+      console.error = originalError
+    }
+  })
 })
