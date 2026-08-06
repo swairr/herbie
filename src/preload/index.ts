@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, clipboard } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '@shared/ipc'
 import type { Api } from '@shared/types'
 
@@ -41,7 +41,7 @@ const api: Api = {
     openExternal: (url) => ipcRenderer.invoke(IPC.shell.openExternal, url)
   },
   clipboard: {
-    readText: () => Promise.resolve(clipboard.readText())
+    readText: () => ipcRenderer.invoke(IPC.clipboard.readText)
   },
   dialog: {
     pickDirectory: () => ipcRenderer.invoke(IPC.dialog.pickDirectory)
