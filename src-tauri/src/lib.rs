@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 mod db;
+mod hook;
 mod labels;
 mod labels_store;
 mod migrations;
@@ -13,11 +14,19 @@ mod settings;
 mod spike_power;
 mod time;
 mod todos;
+mod tracker;
+
+use std::sync::{Arc, OnceLock};
 
 use spike_power::start_power_watcher;
 
 use segment::{Segment, SegmentPatch};
 use todos::{LabelCount, Todo, TodoFilter, TodoInput, TodoPatch};
+use tracker::{GlobalConn, OffWorkState, ProdDeps, Tracker};
+
+// 进程级共享 tracker(对齐 TS `setTrackerInstance`/`getTracker` 的持有人)。命令经此取实例,
+// 不必在注册处逐个透传。3c 接真实 power 路由后,Tracker 仍由同一 Arc 持有。
+static TRACKER: OnceLock<Arc<Tracker>> = OnceLock::new();
 
 #[tauri::command]
 fn ping() -> String {
@@ -107,10 +116,31 @@ fn segments_update(id: String, patch: SegmentPatch) -> Result<Option<Segment>, S
     Ok(segment::update_segment(conn, &id, &patch))
 }
 
+#[tauri::command]
+fn tracker_get_off_work() -> Result<OffWorkState, String> {
+    Ok(OffWorkState {
+        off_work: TRACKER.get().ok_or("tracker not ready")?.get_off_work(),
+    })
+}
+
+#[tauri::command]
+fn tracker_set_off_work(on: bool) -> Result<OffWorkState, String> {
+    let t = TRACKER.get().ok_or("tracker not ready")?;
+    let conn = GlobalConn;
+    let mut deps = ProdDeps;
+    t.set_off_work(&conn, &mut deps, on);
+    Ok(OffWorkState {
+        off_work: t.get_off_work(),
+    })
+}
+
 pub fn run() {
     // 启动占位:先开内存库,使 `pnpm tauri dev` 在数据路径仍未接入时也不崩。
     // 切片6/7 应改为 `db::open_file(db::default_db_path()).expect(...)`(沿用旧数据)。
     db::open_in_memory();
+
+    // 创建进程级 tracker(3b 仅 off-work 命令路径在用;3c 接 power/idle 路由与 start()).
+    TRACKER.set(Arc::new(Tracker::new())).ok();
 
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -126,7 +156,9 @@ pub fn run() {
             todos_soft_delete,
             todos_labels,
             segments_list,
-            segments_update
+            segments_update,
+            tracker_get_off_work,
+            tracker_set_off_work
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
