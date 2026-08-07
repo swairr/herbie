@@ -1,0 +1,22 @@
+[
+  { "input": "今天 #工作 很忙 #项目-x", "expected": ["工作", "项目-x"] },
+  { "input": "见 https://example.com/page#section 和 #工作", "expected": ["工作"] },
+  { "input": "https://git.io/abc#def #todo", "expected": ["todo"] },
+  { "input": "#a #a #b", "expected": ["a", "b"] },
+  { "input": "#Work #WORK", "expected": ["Work", "WORK"] },
+  { "input": "", "expected": [] },
+  { "input": "#", "expected": [] },
+  { "input": "#a", "expected": ["a"] },
+  { "input": "just some text no tags", "expected": [] },
+  { "input": "do #work, then #home.", "expected": ["work", "home"] },
+  { "input": "#! and # work", "expected": [] },
+  { "input": "line1 #a\nline2 #b", "expected": ["a", "b"] },
+  { "input": "https://a.io/x#y https://b.io/z#w #keep", "expected": ["keep"] },
+  { "input": "https://a.io#x#y #ok", "expected": ["ok"] },
+  { "input": "#项目_1 #A-B #测试-2", "expected": ["项目_1", "A-B", "测试-2"] },
+  { "input": "#task1 #2do", "expected": ["task1", "2do"] },
+  { "input": "#a_b-c #1-2_3", "expected": ["a_b-c", "1-2_3"] },
+  { "input": "http://x.io#ok#real", "expected": [] },
+  { "input": "#012345678901234567890123456789012345678901234567890123456789", "expected": ["012345678901234567890123456789012345678901234567890123456789"] },
+  { "input": "#0123456789012345678901234567890123456789012345678901234567890", "expected": ["012345678901234567890123456789012345678901234567890123456789"] }
+]

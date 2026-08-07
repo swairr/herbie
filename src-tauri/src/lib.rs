@@ -5,11 +5,15 @@
 #![allow(dead_code)]
 
 mod db;
+mod labels;
+mod labels_store;
 mod migrations;
 mod settings;
 mod spike_power;
+mod todos;
 
 use spike_power::start_power_watcher;
+use todos::{LabelCount, Todo, TodoFilter, TodoInput, TodoPatch};
 
 #[tauri::command]
 fn ping() -> String {
@@ -42,6 +46,48 @@ fn settings_get_all() -> Result<Vec<(String, String)>, String> {
     Ok(settings::get_all(conn))
 }
 
+#[tauri::command]
+fn todos_list(filter: Option<TodoFilter>) -> Result<Vec<Todo>, String> {
+    let g = db::get();
+    let conn = g.as_ref().ok_or("DB not initialized")?;
+    todos::list_todos(conn, filter.as_ref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn todos_create(input: TodoInput) -> Result<Todo, String> {
+    let mut g = db::get();
+    let conn = g.as_mut().ok_or("DB not initialized")?;
+    todos::create_todo(conn, &input).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn todos_update(id: String, patch: TodoPatch) -> Result<Todo, String> {
+    let mut g = db::get();
+    let conn = g.as_mut().ok_or("DB not initialized")?;
+    todos::update_todo(conn, &id, &patch)
+}
+
+#[tauri::command]
+fn todos_toggle(id: String, done: bool) -> Result<Todo, String> {
+    let g = db::get();
+    let conn = g.as_ref().ok_or("DB not initialized")?;
+    todos::toggle_todo(conn, &id, done).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn todos_soft_delete(id: String) -> Result<(), String> {
+    let g = db::get();
+    let conn = g.as_ref().ok_or("DB not initialized")?;
+    todos::soft_delete_todo(conn, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn todos_labels() -> Result<Vec<LabelCount>, String> {
+    let g = db::get();
+    let conn = g.as_ref().ok_or("DB not initialized")?;
+    todos::list_todo_labels(conn).map_err(|e| e.to_string())
+}
+
 pub fn run() {
     // 启动占位:先开内存库,使 `pnpm tauri dev` 在数据路径仍未接入时也不崩。
     // 切片6/7 应改为 `db::open_file(db::default_db_path()).expect(...)`(沿用旧数据)。
@@ -53,7 +99,13 @@ pub fn run() {
             power_subscribe,
             settings_get,
             settings_set,
-            settings_get_all
+            settings_get_all,
+            todos_list,
+            todos_create,
+            todos_update,
+            todos_toggle,
+            todos_soft_delete,
+            todos_labels
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
