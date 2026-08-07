@@ -8,11 +8,15 @@ mod db;
 mod labels;
 mod labels_store;
 mod migrations;
+mod segment;
 mod settings;
 mod spike_power;
+mod time;
 mod todos;
 
 use spike_power::start_power_watcher;
+
+use segment::{Segment, SegmentPatch};
 use todos::{LabelCount, Todo, TodoFilter, TodoInput, TodoPatch};
 
 #[tauri::command]
@@ -88,6 +92,21 @@ fn todos_labels() -> Result<Vec<LabelCount>, String> {
     todos::list_todo_labels(conn).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn segments_list(day: String) -> Result<Vec<Segment>, String> {
+    let g = db::get();
+    let conn = g.as_ref().ok_or("DB not initialized")?;
+    let now = chrono::Utc::now();
+    Ok(segment::list_segments_by_day(conn, &day, now))
+}
+
+#[tauri::command]
+fn segments_update(id: String, patch: SegmentPatch) -> Result<Option<Segment>, String> {
+    let g = db::get();
+    let conn = g.as_ref().ok_or("DB not initialized")?;
+    Ok(segment::update_segment(conn, &id, &patch))
+}
+
 pub fn run() {
     // 启动占位:先开内存库,使 `pnpm tauri dev` 在数据路径仍未接入时也不崩。
     // 切片6/7 应改为 `db::open_file(db::default_db_path()).expect(...)`(沿用旧数据)。
@@ -105,7 +124,9 @@ pub fn run() {
             todos_update,
             todos_toggle,
             todos_soft_delete,
-            todos_labels
+            todos_labels,
+            segments_list,
+            segments_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

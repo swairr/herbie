@@ -1,0 +1,225 @@
+//! 纯时间函数,逐行翻译 `src/shared/time.ts` 的 `dayBounds` 与 `splitAtMidnight`。
+//!
+//! `formatLocalShort/nowIso/formatDuration/durationMs` 等其余 time 函数**不**翻译
+//! (留 TS renderer 用唯一来源)。此处仅实现写/读路径(切片3 segments 查询)所需的两条。
+//!
+//! 时区语义:`dayBounds` 的本地午夜依赖运行时**本地时区**(等价 JS
+//! `new Date(y,m-1,d,0,0,0,0)` 的本地构造),用 `chrono::Local`。返回的
+//! `start_ms/end_ms` 为 UTC 毫秒整型;`start_iso/end_iso` 为该瞬时绝对 UTC 形式
+//! (`...Z`,毫秒精度),与存储侧 `now_iso()` 同形,从而与 `startAt` 列做字典序预筛。
+//!
+//! ISO 解析兼容两种存储形态:**带 offset/`Z`** 的绝对时间,以及 **naive**
+//! (`2026-08-03T10:00:00`,JS `new Date` 解释为 LOCAL)。先按 rfc3339 解析,失败则按
+//! naive 解释为本地墙钟,再转 UTC 毫秒。
+
+use chrono::{DateTime, Local, NaiveDateTime, SecondsFormat, TimeZone, Utc};
+use serde::Serialize;
+
+use crate::segment::Segment;
+
+/// `DayBounds`:本地自然日 `[start, end)` 的 UTC 毫秒边界与对应 ISO 串。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DayBounds {
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub start_iso: String,
+    pub end_iso: String,
+}
+
+/// 本地日历日 -> 提供毫秒和 ISO 边界。无效输入（不是三个用连字符分隔的数字，
+/// 或不存在的日期）返回 `None`。
+pub fn day_bounds(local_date: &str) -> Option<DayBounds> {
+    let parts: Vec<&str> = local_date.split('-').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let y: i32 = parts[0].parse().ok()?;
+    let m: u32 = parts[1].parse().ok()?;
+    let d: u32 = parts[2].parse().ok()?;
+    // `with_ymd_and_hms` 会考虑夏令时歧义（none/ambiguous）；`.single()` 仅接受单一明确日期。
+    let start = Local.with_ymd_and_hms(y, m, d, 0, 0, 0).single()?;
+    let end = start + chrono::Duration::days(1);
+    let start_ms = start.timestamp_millis();
+    let end_ms = end.timestamp_millis();
+    Some(DayBounds {
+        start_ms,
+        end_ms,
+        start_iso: ms_to_iso_utc(start_ms),
+        end_iso: ms_to_iso_utc(end_ms),
+    })
+}
+
+/// 解析 ISO 字符串为 UTC 毫秒。匹配 JS `new Date(iso).getTime()`：
+/// rfc3339（带 offset/`Z`）成功则用其 offset；失败则按 naive 解释为**本地**墙钟时间
+///（等价 JS 对无 offset 串的 local 解释）。无法解析返回 `None`。
+pub fn parse_iso_to_ms(s: &str) -> Option<i64> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Some(dt.timestamp_millis());
+    }
+    // naive：匹配无 offset 的存储形式；可选毫秒位。本地时间歧义折叠与 JS 一致取 single。
+    let ndt = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f")
+        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
+        .ok()?;
+    let local = Local.from_local_datetime(&ndt).single()?;
+    Some(local.timestamp_millis())
+}
+
+/// 将 segment 切片到本地自然日 `local_date`。返回该日重叠部分 `[lo, hi)`，无重叠返回 `None`。
+/// 开放的 segment（endAt None）按 `now` 截断，使聚合仅计入已流逝时间。绝不因非法输入 panic。
+pub fn split_at_midnight(seg: &Segment, local_date: &str, now: DateTime<Utc>) -> Option<Segment> {
+    let bounds = day_bounds(local_date)?;
+    let start_ms = parse_iso_to_ms(&seg.start_at)?;
+    let end_ms = match &seg.end_at {
+        Some(e) => parse_iso_to_ms(e)?,
+        None => now.timestamp_millis(),
+    };
+    if end_ms < start_ms {
+        return None;
+    }
+    let lo = start_ms.max(bounds.start_ms);
+    let hi = end_ms.min(bounds.end_ms);
+    if hi <= lo {
+        return None;
+    }
+    Some(Segment {
+        id: seg.id.clone(),
+        start_at: ms_to_iso_utc(lo),
+        end_at: Some(ms_to_iso_utc(hi)),
+        process_name: seg.process_name.clone(),
+        title: seg.title.clone(),
+        note: seg.note.clone(),
+        todo_id: seg.todo_id.clone(),
+        kind: seg.kind,
+    })
+}
+
+fn ms_to_iso_utc(ms: i64) -> String {
+    Utc.timestamp_millis_opt(ms)
+        .unwrap()
+        .to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Datelike, Timelike};
+
+    // 测试断言用本地 wall 时分比对（等价 TS `new Date(out.startAt).getHours()`），
+    // 避开具体运行机器时区耦合。
+
+    fn local_at(ms: i64) -> DateTime<Local> {
+        Local.timestamp_millis_opt(ms).unwrap()
+    }
+
+    fn seg(start: &str, end: Option<&str>) -> Segment {
+        Segment {
+            id: "s".into(),
+            start_at: start.into(),
+            end_at: end.map(str::to_string),
+            process_name: "app.exe".into(),
+            title: String::new(),
+            note: String::new(),
+            todo_id: None,
+            kind: crate::segment::SegmentKind::Activity,
+        }
+    }
+
+    fn now_at(y: i32, m: u32, d: u32, h: u32, mi: u32) -> DateTime<Utc> {
+        Local
+            .with_ymd_and_hms(y, m, d, h, mi, 0)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn day_bounds_returns_invalid_for_malformed() {
+        assert!(day_bounds("bad").is_none());
+        assert!(day_bounds("2026-08").is_none());
+        assert!(day_bounds("abc-def-ghi").is_none());
+    }
+
+    #[test]
+    fn day_bounds_marks_local_midnight_to_next_midnight() {
+        let b = day_bounds("2026-08-03").unwrap();
+        let s = local_at(b.start_ms);
+        let e = local_at(b.end_ms);
+        assert_eq!(s.day(), 3);
+        assert_eq!(s.hour(), 0);
+        assert_eq!(s.minute(), 0);
+        assert_eq!(e.day(), 4);
+        assert_eq!(e.hour(), 0);
+    }
+
+    #[test]
+    fn split_unchanged_when_fully_within_day() {
+        let s = seg("2026-08-03T10:00:00", Some("2026-08-03T11:30:00"));
+        let out = split_at_midnight(&s, "2026-08-03", Utc::now()).unwrap();
+        assert_eq!(local_at(parse_iso_to_ms(&out.start_at).unwrap()).hour(), 10);
+        let e = local_at(parse_iso_to_ms(out.end_at.as_ref().unwrap()).unwrap());
+        assert_eq!(e.hour(), 11);
+        assert_eq!(e.minute(), 30);
+        assert_eq!(out.id, "s");
+    }
+
+    #[test]
+    fn split_into_day_segment_starts() {
+        let s = seg("2026-08-03T23:30:00", Some("2026-08-04T00:30:00"));
+        let out = split_at_midnight(&s, "2026-08-03", Utc::now()).unwrap();
+        assert_eq!(local_at(parse_iso_to_ms(&out.start_at).unwrap()).hour(), 23);
+        let e = local_at(parse_iso_to_ms(out.end_at.as_ref().unwrap()).unwrap());
+        assert_eq!(e.day(), 4);
+        assert_eq!(e.hour(), 0);
+    }
+
+    #[test]
+    fn split_into_day_segment_ends() {
+        let s = seg("2026-08-03T23:30:00", Some("2026-08-04T00:30:00"));
+        let out = split_at_midnight(&s, "2026-08-04", Utc::now()).unwrap();
+        let st = local_at(parse_iso_to_ms(&out.start_at).unwrap());
+        assert_eq!(st.hour(), 0);
+        let e = local_at(parse_iso_to_ms(out.end_at.as_ref().unwrap()).unwrap());
+        assert_eq!(e.hour(), 0);
+        assert_eq!(e.minute(), 30);
+    }
+
+    #[test]
+    fn split_null_when_on_a_different_day() {
+        let s = seg("2026-08-03T10:00:00", Some("2026-08-03T11:00:00"));
+        assert!(split_at_midnight(&s, "2026-08-05", Utc::now()).is_none());
+    }
+
+    #[test]
+    fn split_clamps_open_segment_to_now() {
+        let now = now_at(2026, 8, 3, 15, 0);
+        let s = seg("2026-08-03T10:00:00", None);
+        let out = split_at_midnight(&s, "2026-08-03", now).unwrap();
+        assert_eq!(out.end_at.unwrap(), ms_to_iso_utc(now.timestamp_millis()));
+    }
+
+    #[test]
+    fn split_open_yesterday_appears_today_as_midnight_to_now() {
+        let now = now_at(2026, 8, 4, 9, 0);
+        let s = seg("2026-08-03T22:00:00", None);
+        let out = split_at_midnight(&s, "2026-08-04", now).unwrap();
+        assert_eq!(local_at(parse_iso_to_ms(&out.start_at).unwrap()).hour(), 0);
+        assert_eq!(out.end_at.unwrap(), ms_to_iso_utc(now.timestamp_millis()));
+    }
+
+    #[test]
+    fn split_handles_malformed_start_as_null() {
+        let s = seg("not-a-date", Some("2026-08-03T11:00:00"));
+        assert!(split_at_midnight(&s, "2026-08-03", Utc::now()).is_none());
+    }
+
+    #[test]
+    fn split_boundary_exactly_at_midnight_keeps_start() {
+        let s = seg("2026-08-03T00:00:00", Some("2026-08-04T00:00:00"));
+        let out = split_at_midnight(&s, "2026-08-03", Utc::now()).unwrap();
+        assert_eq!(
+            parse_iso_to_ms(&out.start_at).unwrap(),
+            parse_iso_to_ms("2026-08-03T00:00:00").unwrap()
+        );
+    }
+}
