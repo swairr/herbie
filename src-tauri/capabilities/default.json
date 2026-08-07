@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "切片 0：默认能力，放开 core 默认权限供 ping/power 事件自测",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

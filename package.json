@@ -16,6 +16,9 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
+    "dev:renderer": "vite --config vite.renderer.config.ts",
+    "build:renderer": "vite build --config vite.renderer.config.ts",
+    "tauri": "tauri",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "pnpm typecheck:node && pnpm typecheck:web",
@@ -34,12 +37,14 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^3.0.0",
+    "@tauri-apps/api": "^2",
     "better-sqlite3": "^11.5.0",
     "herbie-winhook": "file:native/herbie-winhook"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^1.0.1",
     "@electron/rebuild": "^4.2.0",
+    "@tauri-apps/cli": "^2",
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.10.0",
     "@typescript-eslint/eslint-plugin": "^8.16.0",
