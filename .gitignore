@@ -8,6 +8,3 @@ dist/
 .idea/
 *.tsbuildinfo
 coverage/
-
-# Native module build artifacts (herbie-winhook)
-native/herbie-winhook/build/

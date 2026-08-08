@@ -5,7 +5,7 @@ import tsparser from '@typescript-eslint/parser'
 
 export default [
   {
-    ignores: ['out/**', 'release/**', 'node_modules/**', 'dist/**']
+    ignores: ['out/**', 'release/**', 'node_modules/**', 'dist/**', 'src-tauri/target/**', 'src-tauri/gen/**']
   },
   {
     files: ['**/*.{ts,vue}'],

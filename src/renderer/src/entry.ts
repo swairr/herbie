@@ -2,8 +2,8 @@ import { createApp } from 'vue'
 import './style.css'
 import App from './App.vue'
 
-// Tauri 环境下(`pnpm tauri dev`)在挂载前注入形状等价的薄封装 `window.api`;
-// Electron 路径(`pnpm dev`/`pnpm build`)由 preload 提供 `window.api`,此处标志为 false 不污染。
+// 在 Tauri 环境(`pnpm tauri dev`/打包运行)挂载前注入形状等价的薄封装 `window.api`;
+// 非 Tauri 环境(纯浏览器构建)标志为 false,不注入、直接挂载。
 // 用 then 链而非 top-level await,以兼容 vite 默认构建目标(es2020),并在 mount 之前完成注入。
 const isTauri = !!(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
 

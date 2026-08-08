@@ -8,7 +8,7 @@ function esc(s: string): string {
 
 // Pure renderer for a single day's time log. Both aggregate tables and the per-segment
 // listing are derived purely from the input array + a {todoId -> title} map, so this is
-// testable without fs or electron.
+// testable without fs or the backend.
 export function exportTimeMarkdown(
   day: string,
   segments: Segment[],
