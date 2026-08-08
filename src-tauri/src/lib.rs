@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 mod db;
+mod export;
 mod hook;
 mod journal;
 mod labels;
@@ -28,6 +29,7 @@ use spike_power::start_power_watcher;
 
 use segment::{Segment, SegmentPatch};
 use journal::{JournalEntry, JournalInput, JournalPatch};
+use export::ExportDayData;
 use todos::{LabelCount, Todo, TodoFilter, TodoInput, TodoPatch};
 use tracker::{GatedNotifier, GlobalConn, OffWorkState, ProdDeps, Tracker};
 #[cfg(windows)]
@@ -225,6 +227,30 @@ fn segments_update(id: String, patch: SegmentPatch) -> Result<Option<Segment>, S
     Ok(segment::update_segment(conn, &id, &patch))
 }
 
+// 切片5 export:Rust 只做「拉当日数据」「写文件」「默认目录」;markdown 生成留在
+// renderer(TS shared)。`export_write_file` 的 filename 由 renderer 以 `todos.md` /
+// `time/<day>.md` / `journal/<day>.md` 传入(day 已先经 export_pull_day 的 assert_day)。
+#[tauri::command]
+fn export_write_file(dir: String, filename: String, content: String) -> Result<String, String> {
+    export::write_file(&dir, &filename, &content)
+}
+
+#[tauri::command]
+fn export_default_dir() -> Result<String, String> {
+    Ok(export::default_export_dir())
+}
+
+#[tauri::command]
+fn export_pull_day(day: String) -> Result<ExportDayData, String> {
+    export::assert_day(&day)?;
+    let g = db::get();
+    let conn = g.as_ref().ok_or("DB not initialized")?;
+    Ok(ExportDayData {
+        segments: segment::list_segments_by_day(conn, &day, chrono::Utc::now()),
+        journal: journal::list_journals(conn, &day).map_err(|e| e.to_string())?,
+    })
+}
+
 #[tauri::command]
 fn tracker_get_off_work() -> Result<OffWorkState, String> {
     Ok(OffWorkState {
@@ -277,6 +303,9 @@ pub fn run() {
             journal_soft_delete,
             segments_list,
             segments_update,
+            export_write_file,
+            export_default_dir,
+            export_pull_day,
             tracker_get_off_work,
             tracker_set_off_work
         ])

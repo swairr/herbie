@@ -4,17 +4,22 @@
 // 命令名/事件名严格遵循跨切片命名契约(见 `.kilo/plans/...md`):
 //   todos_list / todos_create / todos_update / todos_toggle / todos_soft_delete / todos_labels
 //   settings_get / settings_set / settings_get_all(切片1 已注册)
-//   segments_list / segments_update / time_export / journal_* / tracker_get_off_work / tracker_set_off_work
-//   shell_open_external / clipboard_read_text / dialog_pick_directory / window_quick_add_hide / export_export_markdown
+//   segments_list / segments_update / journal_* / tracker_get_off_work / tracker_set_off_work
+//   export_default_dir / export_pull_day / export_write_file(切片5 已注册)
+//   shell_open_external / clipboard_read_text / dialog_pick_directory / window_quick_add_hide
 //   事件:shortcut://error  quickadd://show | hide | blur  power://event(切片0)
 //
-// 本切片仅后端注册了 todos_* 与 settings_*;其余命令为字符串字面量,后切片注册即可。
-// 当前调用未注册命令会在后端报错(仅在该 tab 被打开时触发),不影响 build/typecheck。
+// 切片5:export/time/journal 三个导出方法改为全 TS 实现 —— 拉数据(invoke)→ 调 shared
+// markdown 纯函数生成 → 写文件(invoke)→ 返回 ExportResult。Rust 不再需要 export_export_markdown
+// / time_export / journal_export 占位命令。
 // settings_get_all 后端返回 `Vec<(String,String)>`(数组对),此处适配为 `Partial<Settings>` 对象,
 // 与 Electron preload 的 `Api.settings.getAll` 形状一致。
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { exportMarkdown as renderTodosMarkdown } from '@shared/markdown'
+import { exportTimeMarkdown } from '@shared/time-markdown'
+import { exportJournalMarkdown } from '@shared/journal-markdown'
 import type {
   Api,
   ExportResult,
@@ -28,6 +33,12 @@ import type {
   Todo
 } from '@shared/types'
 
+// 与 Rust `export_pull_day` 的 `ExportDayData` 对齐:segments/journal 当日数据。
+interface ExportDayData {
+  segments: Segment[]
+  journal: JournalEntry[]
+}
+
 // 请求类命令封装:返回 detach 函数 (() => void);Tauri 的 listen 是异步的,此处把 unlisten 异步解析后惰性调用,
 // 形状与 Electron preload 的同步 detach 保持一致(onMounted/onUnmounted 直接成对使用)。
 function attach(event: string, payload: (p: unknown) => void): () => void {
@@ -35,6 +46,19 @@ function attach(event: string, payload: (p: unknown) => void): () => void {
   return () => {
     void p.then((u: UnlistenFn) => u())
   }
+}
+
+// 对齐 TS `resolveExportDir`:settings 里的 exportDir 优先,未设置回退到默认目录
+// (%APPDATA%/herbie,Rust export_default_dir)。
+async function resolveExportDir(): Promise<string> {
+  return (
+    (await invoke<string | null>('settings_get', { key: 'exportDir' })) ||
+    (await invoke<string>('export_default_dir'))
+  )
+}
+
+function toError(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
 }
 
 export function createTauriApi(): Api {
@@ -58,21 +82,66 @@ export function createTauriApi(): Api {
       }
     },
     export: {
-      exportMarkdown: () => invoke<ExportResult>('export_export_markdown')
+      exportMarkdown: async (): Promise<ExportResult> => {
+        try {
+          const dir = await resolveExportDir()
+          const todos = await invoke<Todo[]>('todos_list')
+          const content = renderTodosMarkdown(todos)
+          const path = await invoke<string>('export_write_file', {
+            dir,
+            filename: 'todos.md',
+            content
+          })
+          return { ok: true, path }
+        } catch (e) {
+          return { ok: false, error: toError(e) }
+        }
+      }
     },
     segments: {
       list: (day) => invoke<Segment[]>('segments_list', { day }),
       update: (id, patch) => invoke<Segment | null>('segments_update', { id, patch })
     },
     time: {
-      export: (day) => invoke<TimeExportResult>('time_export', { day })
+      export: async (day: string): Promise<TimeExportResult> => {
+        try {
+          const dir = await resolveExportDir()
+          const data = await invoke<ExportDayData>('export_pull_day', { day })
+          const todos = await invoke<Todo[]>('todos_list')
+          const titles: Record<string, string> = {}
+          for (const t of todos) titles[t.id] = t.title
+          const content = exportTimeMarkdown(day, data.segments, titles)
+          const path = await invoke<string>('export_write_file', {
+            dir,
+            filename: `time/${day}.md`,
+            content
+          })
+          return { ok: true, path, day }
+        } catch (e) {
+          return { ok: false, error: toError(e), day }
+        }
+      }
     },
     journal: {
       list: (day) => invoke<JournalEntry[]>('journal_list', { day }),
       create: (input) => invoke<JournalEntry>('journal_create', { input }),
       update: (id, patch) => invoke<JournalEntry>('journal_update', { id, patch }),
       softDelete: (id) => invoke<void>('journal_soft_delete', { id }),
-      export: (day) => invoke<JournalExportResult>('journal_export', { day })
+      export: async (day: string): Promise<JournalExportResult> => {
+        try {
+          const dir = await resolveExportDir()
+          const data = await invoke<ExportDayData>('export_pull_day', { day })
+          const content = exportJournalMarkdown(day, data.journal)
+          const path = await invoke<string>('export_write_file', {
+            dir,
+            filename: `journal/${day}.md`,
+            content
+          })
+          return { ok: true, path, day }
+        } catch (e) {
+          return { ok: false, error: toError(e), day }
+        }
+      }
     },
     tracker: {
       getOffWork: () => invoke<OffWorkState>('tracker_get_off_work'),
