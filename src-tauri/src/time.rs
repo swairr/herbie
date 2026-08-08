@@ -222,4 +222,80 @@ mod tests {
             parse_iso_to_ms("2026-08-03T00:00:00").unwrap()
         );
     }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SplitFixtureCase {
+        seg: SplitFixtureSeg,
+        local_date: String,
+        now: Option<String>,
+        expected: Option<SplitFixtureExpected>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct SplitFixtureSeg {
+        start: String,
+        end: Option<String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct SplitFixtureExpected {
+        start: String,
+        end: String,
+    }
+
+    /// absolute ISO → 本机本地墙钟 `YYYY-MM-DDTHH:MM`(与 TS 夹具测试的 `toWall` 同语义)。
+    fn wall_minutes(iso: &str) -> String {
+        let ms = parse_iso_to_ms(iso).expect("output iso must parse");
+        local_at(ms).format("%Y-%m-%dT%H:%M").to_string()
+    }
+
+    /// 共享 JSON 夹具对拍:与 TS `tests/segments-split-fixture.test.ts` 读同一份
+    /// `tests/fixtures/segments-split.json`。夹具时间均为 naive 墙钟,两侧把 impl 的
+    /// absolute 输出转回本机本地墙钟分钟再比 → 任意时区一致命中。
+    #[test]
+    fn split_at_midnight_fixture_parity() {
+        let raw = include_str!("../../tests/fixtures/segments-split.json");
+        let cases: Vec<SplitFixtureCase> =
+            serde_json::from_str(raw).expect("segments-split.json must parse as array of cases");
+        for c in &cases {
+            let seg = Segment {
+                id: "s".into(),
+                start_at: c.seg.start.clone(),
+                end_at: c.seg.end.clone(),
+                process_name: String::new(),
+                title: String::new(),
+                note: String::new(),
+                todo_id: None,
+                kind: crate::segment::SegmentKind::Activity,
+            };
+            // naive → 按本地解释转 UTC 毫秒(parse_iso_to_ms),再构造 DateTime<Utc> 作 now。
+            let now = match &c.now {
+                Some(n) => Utc
+                    .timestamp_millis_opt(parse_iso_to_ms(n).expect("now must parse"))
+                    .unwrap(),
+                None => Utc::now(),
+            };
+            let out = split_at_midnight(&seg, &c.local_date, now);
+            match &c.expected {
+                None => assert!(out.is_none(), "expected null slice for {}", c.local_date),
+                Some(exp) => {
+                    let out = out.expect("expected a slice");
+                    assert_eq!(
+                        wall_minutes(&out.start_at),
+                        exp.start,
+                        "start wall for {}",
+                        c.local_date
+                    );
+                    let end_iso = out.end_at.as_ref().expect("slices always have end_at");
+                    assert_eq!(
+                        wall_minutes(end_iso),
+                        exp.end,
+                        "end wall for {}",
+                        c.local_date
+                    );
+                }
+            }
+        }
+    }
 }

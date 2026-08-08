@@ -1,22 +1,28 @@
 //! segments 仓储,逐行翻译 `src/main/segments.ts` + `segments-row.ts` + `segments-query.ts`。
 //!
-//! 本切片(3a)实现了写/读路径:**`open_segment` / `close_open` / `list_all` /
-//! `list_segments_by_day` / `update_segment` / `fetch_todo_titles`**。涉及 `HookNotifier`
-//! 抽象的 `start_tracking`/`stop_tracking` 留 3c(连同 segments.test.ts 其余 5 条用例)。
+//! 写/读路径:**`open_segment` / `close_open` / `list_all` / `list_segments_by_day` /
+//! `update_segment` / `fetch_todo_titles`**。本片(3c-A)补 **`start_tracking` /
+//! `stop_tracking`**(前台事件 → 段开关,翻译 segments.test.ts 全部 7 条);
+//! 真实原生 SetWinEventHook 接入留 3c-B。
 //!
 //! 仓储函数取 `&Connection`(不自行锁全局、不需 `&mut`——segments 无事务);命令层在
 //! `lib.rs` 锁 `db::get()` 后借 `&Connection` 传入,与 settings/todos 模式一致。
+//! `start_tracking` 的回调持 `Arc<C: ConnAccess>`(prod 全局 / test 局部连接均可用)。
 //!
 //! `Segment`/`SegmentKind`/`SegmentPatch` serde 对齐 TS `src/shared/types.ts`:
 //! camelCase 字段名;`kind` ∈ "activity"/"idle";`SegmentPatch.todo_id` 三态见字段注释。
+
+use std::sync::Arc;
 
 use chrono::Utc;
 use rusqlite::{params, params_from_iter, Connection, Row};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::hook::{HookNotifier, WinHookEvent};
 use crate::time::{day_bounds, split_at_midnight};
 use crate::todos::now_iso;
+use crate::tracker::ConnAccess;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -243,11 +249,70 @@ pub fn fetch_todo_titles(conn: &Connection, todo_ids: &[String]) -> Vec<(String,
     rows.filter_map(|r| r.ok()).collect()
 }
 
+/// `startTracking(notifier)`:注册回调把前台/改题事件翻译为段开关。
+///
+/// dedup 状态(`current_hwnd` / `open_process` / `open_title`)寄生于闭包捕获,跨事件保持;
+/// DB 经 `ConnAccess` 锁取(测试传 `Arc<LocalConn>`)。整块错误吞掉仅 `eprintln!`(原生回调
+/// 边界不得让业务错误穿透),且仅当两条写库全部成功才推进 dedup 状态(等价 TS 的 try/catch)。
+pub fn start_tracking<N: HookNotifier, C: ConnAccess + 'static>(notifier: N, conn: Arc<C>) -> N {
+    let mut notifier = notifier;
+    let mut current_hwnd: i64 = -1;
+    let mut open_process = String::new();
+    let mut open_title = String::new();
+    notifier.start(Box::new(move |e: WinHookEvent| {
+        // NAMECHANGE 仅对当前前台窗口有意义;迟到的旧窗口事件忽略。
+        if e.kind == "namechange" && current_hwnd != e.hwnd {
+            return;
+        }
+        // 去重:重复的 (processName, title) 不再 close+reopen,避免写放大。
+        if e.kind == "namechange"
+            && e.process_name == open_process
+            && (e.title == open_title || e.title.is_empty())
+        {
+            return;
+        }
+        let written: Result<(), String> = conn.lock_conn(|c| {
+            let _ = close_open(c, &now_iso());
+            open_segment(
+                c,
+                &OpenSegmentInput {
+                    process_name: e.process_name.clone(),
+                    title: e.title.clone(),
+                    kind: None,
+                    todo_id: None,
+                    start_at: None,
+                },
+            )
+            .map_err(|err| err.to_string())?;
+            Ok(())
+        });
+        match written {
+            Ok(()) => {
+                current_hwnd = e.hwnd;
+                open_process = e.process_name.clone();
+                open_title = e.title.clone();
+            }
+            Err(err) => eprintln!("[segments] failed to process native window event: {err}"),
+        }
+    }));
+    notifier
+}
+
+/// `stopTracking(notifier, at)`:先关当前开放段(幂等),再停掉通知器。
+pub fn stop_tracking<N: HookNotifier, C: ConnAccess>(mut notifier: N, conn: &C, at: &str) {
+    conn.lock_conn(|c| {
+        let _ = close_open(c, at);
+    });
+    notifier.stop();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::migrations::run_migrations;
+    use crate::tracker::LocalConn;
     use chrono::TimeZone;
+    use std::sync::{Arc, Mutex};
 
     fn make() -> Connection {
         let mut conn = Connection::open_in_memory().unwrap();
@@ -267,7 +332,7 @@ mod tests {
     }
 
     // 翻译自 segments.test.ts 的 2 条不依赖 notifier 的用例;其余 5 条(startTracking/
-    // stopTracking/错误隔离)在 3c 连同 HookNotifier 抽象补齐。
+    // stopTracking/错误隔离)在下方随 HookNotifier 抽象补齐。
 
     #[test]
     fn open_segment_inserts_an_open_activity_row() {
@@ -417,5 +482,168 @@ mod tests {
         // 空串按 TS 语义归为置空(置 NULL)。
         let empty_str: SegmentPatch = serde_json::from_str(r#"{"todoId":""}"#).unwrap();
         assert_eq!(empty_str.todo_id, Some(None));
+    }
+
+    // 等价 TS `fakeNotifier`:计数 starts/stops + 存 cb 供外部 emit。cb 存
+    // `Arc<Mutex<Option<...>>>`,clone 出的 emit 句柄共享同一存储(对应 JS 对象引用语义)。
+    #[derive(Clone)]
+    struct FakeHook {
+        cb: Arc<Mutex<Option<Box<dyn FnMut(WinHookEvent) + Send + 'static>>>>,
+        starts: Arc<Mutex<i64>>,
+        stops: Arc<Mutex<i64>>,
+    }
+    impl FakeHook {
+        fn new() -> Self {
+            Self {
+                cb: Arc::new(Mutex::new(None)),
+                starts: Arc::new(Mutex::new(0)),
+                stops: Arc::new(Mutex::new(0)),
+            }
+        }
+        fn starts(&self) -> i64 {
+            *self.starts.lock().unwrap()
+        }
+        fn stops(&self) -> i64 {
+            *self.stops.lock().unwrap()
+        }
+        fn emit(&mut self, e: WinHookEvent) {
+            let mut g = self.cb.lock().unwrap();
+            if let Some(cb) = g.as_mut() {
+                cb(e);
+            }
+        }
+    }
+    impl HookNotifier for FakeHook {
+        fn start(&mut self, cb: Box<dyn FnMut(WinHookEvent) + Send + 'static>) {
+            *self.starts.lock().unwrap() += 1;
+            *self.cb.lock().unwrap() = Some(cb);
+        }
+        fn stop(&mut self) {
+            *self.stops.lock().unwrap() += 1;
+            *self.cb.lock().unwrap() = None;
+        }
+    }
+
+    fn foreground(hwnd: i64, process: &str, title: &str) -> WinHookEvent {
+        WinHookEvent {
+            kind: "foreground",
+            hwnd,
+            process_name: process.into(),
+            title: title.into(),
+        }
+    }
+
+    fn name_change(hwnd: i64, process: &str, title: &str) -> WinHookEvent {
+        WinHookEvent {
+            kind: "namechange",
+            hwnd,
+            process_name: process.into(),
+            title: title.into(),
+        }
+    }
+
+    // 与 tracker 测试同款局部连接:(Arc<Mutex<Connection>>, Arc<LocalConn>),fk + 迁移,
+    // 各测试独立持有避免并行竞态。
+    fn make_local() -> (Arc<Mutex<Connection>>, Arc<LocalConn>) {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let _ = conn.pragma_update(None, "foreign_keys", "ON");
+        run_migrations(&mut conn).unwrap();
+        let conn = Arc::new(Mutex::new(conn));
+        let ca = Arc::new(LocalConn::new(conn.clone()));
+        (conn, ca)
+    }
+
+    fn with_conn<F, R>(conn: &Arc<Mutex<Connection>>, f: F) -> R
+    where
+        F: FnOnce(&Connection) -> R,
+    {
+        f(&*conn.lock().unwrap())
+    }
+
+    // 翻译 segments.test.ts 的 5 条依赖 notifier 的用例。
+
+    #[test]
+    fn start_tracking_opens_new_and_closes_previous_on_each_foreground() {
+        let (conn, ca) = make_local();
+        let hook = FakeHook::new();
+        let mut emit = hook.clone();
+        let hook = start_tracking(hook, ca.clone());
+        assert_eq!(hook.starts(), 1);
+
+        emit.emit(foreground(1, "a.exe", "A"));
+        emit.emit(foreground(2, "b.exe", "B"));
+
+        let rows = with_conn(&conn, |c| list_all(c).unwrap());
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].process_name, "a.exe");
+        assert!(rows[0].end_at.is_some());
+        assert_eq!(rows[1].process_name, "b.exe");
+        assert!(rows[1].end_at.is_none());
+    }
+
+    #[test]
+    fn namechange_for_current_hwnd_updates_title_via_close_open() {
+        let (conn, ca) = make_local();
+        let hook = FakeHook::new();
+        let mut emit = hook.clone();
+        let _hook = start_tracking(hook, ca.clone());
+
+        emit.emit(foreground(5, "c.exe", "Doc1"));
+        emit.emit(name_change(5, "c.exe", "Doc2"));
+
+        let rows = with_conn(&conn, |c| list_all(c).unwrap());
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].title, "Doc1");
+        assert_eq!(rows[1].title, "Doc2");
+        assert!(rows[0].end_at.is_some());
+        assert!(rows[1].end_at.is_none());
+    }
+
+    #[test]
+    fn namechange_for_non_foreground_hwnd_is_ignored() {
+        let (conn, ca) = make_local();
+        let hook = FakeHook::new();
+        let mut emit = hook.clone();
+        let _hook = start_tracking(hook, ca.clone());
+
+        emit.emit(foreground(7, "c.exe", "X"));
+        emit.emit(name_change(99, "other.exe", "Y"));
+
+        let rows = with_conn(&conn, |c| list_all(c).unwrap());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title, "X");
+        assert!(rows[0].end_at.is_none());
+    }
+
+    #[test]
+    fn stop_tracking_closes_open_and_stops_the_notifier() {
+        let (conn, ca) = make_local();
+        let hook = FakeHook::new();
+        let mut emit = hook.clone();
+        let hook = start_tracking(hook, ca.clone());
+        emit.emit(foreground(1, "a.exe", "A"));
+
+        let check = hook.clone();
+        stop_tracking(hook, &*ca, "2026-08-03T12:00:00Z");
+        assert_eq!(check.stops(), 1);
+
+        let rows = with_conn(&conn, |c| list_all(c).unwrap());
+        assert_eq!(rows[0].end_at.as_deref(), Some("2026-08-03T12:00:00Z"));
+    }
+
+    #[test]
+    fn isolates_event_handler_errors_from_the_native_callback_boundary() {
+        // 未迁移的局部连接:无 segments 表 → open_segment INSERT 报错,cb 吞错不 panic。
+        let raw = Connection::open_in_memory().unwrap();
+        let conn = Arc::new(Mutex::new(raw));
+        let ca = Arc::new(LocalConn::new(conn));
+        let hook = FakeHook::new();
+        let mut emit = hook.clone();
+        let _hook = start_tracking(hook, ca.clone());
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            emit.emit(foreground(2, "b.exe", "B"));
+        }));
+        assert!(result.is_ok());
     }
 }

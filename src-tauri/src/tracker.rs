@@ -336,7 +336,7 @@ mod tests {
         }
     }
     impl HookNotifier for FakeHook {
-fn start(&mut self, mut cb: Box<dyn FnMut(WinHookEvent) + Send + 'static>) {
+fn start(&mut self, cb: Box<dyn FnMut(WinHookEvent) + Send + 'static>) {
             *self.cb.lock().unwrap() = Some(cb);
         }
         fn stop(&mut self) {
@@ -423,7 +423,7 @@ fn start(&mut self, mut cb: Box<dyn FnMut(WinHookEvent) + Send + 'static>) {
         let (conn, ca) = make();
         let mut deps = FakeDeps::new();
         let t = Tracker::new();
-        let mut hook = FakeHook::new();
+        let hook = FakeHook::new();
         let mut emit = hook.clone();
         let mut gated = t.gate_notifier(hook);
         let received = Arc::new(Mutex::new(None));
@@ -473,7 +473,7 @@ fn start(&mut self, mut cb: Box<dyn FnMut(WinHookEvent) + Send + 'static>) {
         let (conn, ca) = make();
         let mut deps = FakeDeps::new();
         let t = Tracker::new();
-        let mut hook = FakeHook::new();
+        let hook = FakeHook::new();
         let mut emit = hook.clone();
         let mut current_hwnd: i64 = -1;
         let ca_for_cb = ca.clone();
@@ -517,7 +517,7 @@ fn start(&mut self, mut cb: Box<dyn FnMut(WinHookEvent) + Send + 'static>) {
         let mut deps = FakeDeps::new();
         with_conn(&conn, |c| settings::set(c, settings::KEY_IDLE_THRESHOLD_SEC, "10").unwrap());
         let t = Tracker::new();
-        let mut hook = FakeHook::new();
+        let hook = FakeHook::new();
         let mut emit = hook.clone();
         let mut current_hwnd: i64 = -1;
         let ca_for_cb = ca.clone();
