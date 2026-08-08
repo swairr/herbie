@@ -16,6 +16,8 @@
         "title": "Herbie",
         "width": 900,
         "height": 700,
+        "minWidth": 600,
+        "minHeight": 480,
         "resizable": true
       }
     ],

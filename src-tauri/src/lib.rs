@@ -13,6 +13,7 @@ mod labels_store;
 mod migrations;
 mod segment;
 mod settings;
+mod shell;
 mod spike_power;
 mod time;
 mod todos;
@@ -129,10 +130,21 @@ fn settings_get(key: String) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn settings_set(key: String, value: String) -> Result<(), String> {
-    let g = db::get();
-    let conn = g.as_ref().ok_or("DB not initialized")?;
-    settings::set(conn, &key, &value).map_err(|e| e.to_string())
+fn settings_set(app: tauri::AppHandle, key: String, value: String) -> Result<(), String> {
+    {
+        let g = db::get();
+        let conn = g.as_ref().ok_or("DB not initialized")?;
+        settings::set(conn, &key, &value).map_err(|e| e.to_string())?;
+    }
+    // 切片6 外壳副作用(对齐 Electron `IPC.settings.set` 的响应):
+    // - shortcut 变更 → 卸载旧快捷键并重注册(失败写 shortcutError + shortcut://error);
+    // - idleThresholdSec → no-op(阈值由 tracker 轮询实时读取);
+    // - 其余键 → 仅刷新托盘菜单 label。
+    if key == settings::KEY_SHORTCUT {
+        shell::reregister_shortcut(&app);
+    }
+    let _ = shell::refresh_tray_menu(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -269,20 +281,78 @@ fn tracker_set_off_work(on: bool) -> Result<OffWorkState, String> {
     })
 }
 
+// ---- 切片6 外壳命令(renderer 薄封装同名 invoke,形状见 `src/shared/types.ts`) ----
+
+/// 用系统默认程序打开 URL(tauri-plugin-opener 2.5.x 的 `OpenerExt::open_url`)。
+#[tauri::command]
+fn shell_open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// 读剪贴板文本(tauri-plugin-clipboard-manager 2.3.x 的 `ClipboardExt::read_text`)。
+/// 空剪贴板/无文本返回空串,对齐 Electron `clipboard.readText()` 从不抛错。
+#[tauri::command]
+fn clipboard_read_text(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    match app.clipboard().read_text() {
+        Ok(text) => Ok(text),
+        Err(e) => {
+            let msg = e.to_string();
+            if shell::is_empty_clipboard_error(&msg) {
+                Ok(String::new())
+            } else {
+                Err(msg)
+            }
+        }
+    }
+}
+
+/// 目录选择(tauri-plugin-dialog 2.7.x 的 `DialogExt` + `blocking_pick_folder`)。
+/// 取消返回 None。命令为 async(插件文档要求阻塞对话框勿在主线程使用)。
+#[tauri::command]
+async fn dialog_pick_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::{DialogExt, FilePath};
+    let picked = app.dialog().file().blocking_pick_folder();
+    Ok(picked.map(|fp| match fp {
+        FilePath::Path(path) => path.to_string_lossy().into_owned(),
+        FilePath::Url(url) => url.to_string(),
+    }))
+}
+
+/// 收起 Quick Add 窗口(renderer 冲草稿后请求 hide;hide 时 emit `quickadd://hide`)。
+#[tauri::command]
+fn window_quick_add_hide(app: tauri::AppHandle) -> Result<(), String> {
+    shell::hide_quick_add(&app);
+    Ok(())
+}
+
 pub fn run() {
-    // 启动占位:先开内存库,使 `pnpm tauri dev` 在数据路径仍未接入时也不崩。
-    // 切片6/7 应改为 `db::open_file(db::default_db_path()).expect(...)`(沿用旧数据)。
-    db::open_in_memory();
+    // 沿用旧 Electron 数据路径 `%APPDATA%/herbie/herbie.db`(数据零迁移,见 db.rs)。
+    db::open_file(db::default_db_path()).expect("failed to open herbie.db");
 
     // 创建进程级 tracker(3b 仅 off-work 命令路径在用;3c-B 由 start_tracking_system 接线).
     TRACKER.set(Arc::new(Tracker::new())).ok();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             // 3c-B 生产接线:TRACKER 已在上面提前 set,setup 内即可启动前台钩子/
             // idle 轮询/电源事件(本机 Windows 运行即真实生效)。
             #[cfg(windows)]
             start_tracking_system(&app.handle());
+
+            // 切片6 外壳:主窗口托盘驻留 + Quick Add 窗口 + 托盘 + 全局快捷键。
+            let handle = app.handle();
+            shell::setup_main_window(handle);
+            shell::create_quick_add_window(handle);
+            let _ = shell::create_tray(handle);
+            shell::register_shortcut(handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -307,8 +377,23 @@ pub fn run() {
             export_default_dir,
             export_pull_day,
             tracker_get_off_work,
-            tracker_set_off_work
+            tracker_set_off_work,
+            shell_open_external,
+            clipboard_read_text,
+            dialog_pick_directory,
+            window_quick_add_hide
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app, event| {
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            // 唯一退出路径是托盘「退出」;此处拆除追踪(join 轮询 + 关开放段/前台钩子)、
+            // 反注册快捷键。DB 由进程退出回收(WAL 安全)。
+            shell::QUITTING.store(true, std::sync::atomic::Ordering::SeqCst);
+            #[cfg(windows)]
+            stop_tracking_system();
+            shell::unregister_shortcut(app);
+        }
+    });
 }

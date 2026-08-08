@@ -12,10 +12,17 @@ function mountApp(): void {
 }
 
 if (isTauri) {
-  void import('./api/tauri').then(({ createTauriApi }) => {
-    window.api = createTauriApi()
-    mountApp()
-  })
+  void Promise.all([import('./api/tauri'), import('@tauri-apps/api/window')]).then(
+    ([{ createTauriApi }, { getCurrentWindow }]) => {
+      // Quick Add 窗口(label === 'quickadd')由 Rust 用默认 URL 创建(不带 hash),
+      // 这里按窗口 label 重定向到 App.vue 的 `#/quickadd` 路由。
+      if (getCurrentWindow().label === 'quickadd') {
+        location.hash = '#/quickadd'
+      }
+      window.api = createTauriApi()
+      mountApp()
+    }
+  )
 } else {
   mountApp()
 }

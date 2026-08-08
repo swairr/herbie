@@ -1,7 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "切片 0：默认能力，放开 core 默认权限供 ping/power 事件自测",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "description": "切片 0：默认能力，放开 core 默认权限供 ping/power 事件自测；切片 6 追加外壳插件默认权限（global-shortcut/dialog/opener/clipboard）",
+  "windows": ["main", "quickadd"],
+  "permissions": [
+    "core:default",
+    "global-shortcut:default",
+    "dialog:default",
+    "opener:default",
+    "clipboard-manager:default"
+  ]
 }
