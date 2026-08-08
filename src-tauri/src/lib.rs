@@ -6,6 +6,7 @@
 
 mod db;
 mod hook;
+mod journal;
 mod labels;
 mod labels_store;
 mod migrations;
@@ -26,6 +27,7 @@ use std::time::Duration;
 use spike_power::start_power_watcher;
 
 use segment::{Segment, SegmentPatch};
+use journal::{JournalEntry, JournalInput, JournalPatch};
 use todos::{LabelCount, Todo, TodoFilter, TodoInput, TodoPatch};
 use tracker::{GatedNotifier, GlobalConn, OffWorkState, ProdDeps, Tracker};
 #[cfg(windows)]
@@ -181,6 +183,34 @@ fn todos_labels() -> Result<Vec<LabelCount>, String> {
 }
 
 #[tauri::command]
+fn journal_list(day: String) -> Result<Vec<JournalEntry>, String> {
+    let g = db::get();
+    let conn = g.as_ref().ok_or("DB not initialized")?;
+    journal::list_journals(conn, &day).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn journal_create(input: JournalInput) -> Result<JournalEntry, String> {
+    let mut g = db::get();
+    let conn = g.as_mut().ok_or("DB not initialized")?;
+    journal::create_journal(conn, &input)
+}
+
+#[tauri::command]
+fn journal_update(id: String, patch: JournalPatch) -> Result<JournalEntry, String> {
+    let mut g = db::get();
+    let conn = g.as_mut().ok_or("DB not initialized")?;
+    journal::update_journal(conn, &id, &patch)
+}
+
+#[tauri::command]
+fn journal_soft_delete(id: String) -> Result<(), String> {
+    let g = db::get();
+    let conn = g.as_ref().ok_or("DB not initialized")?;
+    journal::soft_delete_journal(conn, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn segments_list(day: String) -> Result<Vec<Segment>, String> {
     let g = db::get();
     let conn = g.as_ref().ok_or("DB not initialized")?;
@@ -241,6 +271,10 @@ pub fn run() {
             todos_toggle,
             todos_soft_delete,
             todos_labels,
+            journal_list,
+            journal_create,
+            journal_update,
+            journal_soft_delete,
             segments_list,
             segments_update,
             tracker_get_off_work,

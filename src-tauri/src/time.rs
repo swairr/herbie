@@ -50,6 +50,13 @@ pub fn day_bounds(local_date: &str) -> Option<DayBounds> {
     })
 }
 
+/// 本地时区 `YYYY-MM-DD`,等价 TS `localDateString(nowIso())`:
+/// 把 UTC 绝对时刻换算到运行时本地时区的墙钟日期。入参恒为有效时刻,故无 TS 对
+/// 无效 ISO 返回空串的分支。
+pub fn local_date_string(now_utc: DateTime<Utc>) -> String {
+    now_utc.with_timezone(&Local).format("%Y-%m-%d").to_string()
+}
+
 /// 解析 ISO 字符串为 UTC 毫秒。匹配 JS `new Date(iso).getTime()`：
 /// rfc3339（带 offset/`Z`）成功则用其 offset；失败则按 naive 解释为**本地**墙钟时间
 ///（等价 JS 对无 offset 串的 local 解释）。无法解析返回 `None`。
@@ -150,6 +157,24 @@ mod tests {
         assert_eq!(s.minute(), 0);
         assert_eq!(e.day(), 4);
         assert_eq!(e.hour(), 0);
+    }
+
+    #[test]
+    fn local_date_string_formats_local_calendar_date() {
+        // 以本地墙钟构造 2026-08-03 12:00,再转 UTC,断言回读仍是本地同日 —— 与时区解耦。
+        let noon = Local
+            .with_ymd_and_hms(2026, 8, 3, 12, 0, 0)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(local_date_string(noon), "2026-08-03");
+        // 午夜前 1 分钟仍属当日,深夜 23:59 也属当日;跨日由 day_bounds 覆盖。
+        let late = Local
+            .with_ymd_and_hms(2026, 8, 3, 23, 59, 0)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(local_date_string(late), "2026-08-03");
     }
 
     #[test]
