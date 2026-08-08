@@ -6,9 +6,10 @@
 //!   (2) `gate_notifier` 返回的 `GatedNotifier` 持同一 `Arc`,其回调跨闭包 mutate 状态。
 //! - DB 连接经 `ConnAccess` 抽象:`GlobalConn`(prod 锁全局 `db::get()`)/
 //!   `LocalConn`(test 锁局部 `Arc<Mutex<Connection>>`),仓储函数仍取 `&Connection`。
-//! - DI:`TrackerDeps` 仅暴露"当前空闲秒"与"本机时刻"两个纯取值,3c 才接真实
-//!   `GetLastInputInfo` 与 power 路由(本片 `start()` 仅置 `started=true`,power 由测试
-//!   直接调 `on_power` 驱动 —— 行为等价于 TS 的 `deps.fire(...)`).
+//! - DI:`TrackerDeps` 仅暴露"当前空闲秒"与"本机时刻"两个纯取值。3c-B 已把
+//!   `ProdDeps::get_idle_sec` 接真实 `GetLastInputInfo`,并把电源/锁屏路由接到
+//!   `lib.rs::start_tracking_system`(生产接线);测试仍用 `FakeDeps` 直接驱动
+//!   `poll` / `on_power` —— 等价于 TS 的 `deps.fire(...)`。
 //!
 //! 锁顺序:始终「先 state 后 db」——方法先锁 `self.state`,再在需要写库时经
 //! `conn.lock_conn` 锁连接。3b 无并发场景,该顺序留作 3c 注意锚点。
@@ -80,20 +81,19 @@ pub enum PowerEvent {
     SessionUnlock,
 }
 
-/// DI 表面:仅暴露 tracker 状态机所需的两个取值。`get_idle_sec` 在 prod 由 3c 接
-/// `GetLastInputInfo`(本片 `ProdDeps` 返 0 占位);`now_local` 即本机墙钟。
+/// DI 表面:仅暴露 tracker 状态机所需的两个取值。`get_idle_sec` 在 prod 由 3c-B 接
+/// 真实 `GetLastInputInfo`(见 `ProdDeps`);`now_local` 即本机墙钟。
 pub trait TrackerDeps {
     fn get_idle_sec(&mut self) -> u64;
     fn now_local(&mut self) -> DateTime<Local>;
 }
 
-/// prod deps:`now_local` 即 `Local::now()`;`get_idle_sec` 本片返 0(锚定 3c 接真实空闲),
-/// 故 3b prod poll 永不进 idle 分支 —— 仅 off-work 命令路径被 UI 触发使用。
+/// prod deps:`now_local` 即 `Local::now()`;`get_idle_sec` 3c-B 已接真实 Win32 空闲秒
+/// (`win::idle::get_idle_sec`,GetLastInputInfo + GetTickCount64 差值)。
 pub struct ProdDeps;
 impl TrackerDeps for ProdDeps {
     fn get_idle_sec(&mut self) -> u64 {
-        // 3c: Win32 GetLastInputInfo + tick 差值。
-        0
+        crate::win::idle::get_idle_sec()
     }
     fn now_local(&mut self) -> DateTime<Local> {
         Local::now()
@@ -229,9 +229,10 @@ impl Tracker {
         self.state.lock().expect("state poisoned").off_work
     }
 
-    /// 启动:本片仅置 `started=true`。3c 在此注册 power 路由(suspend/resume/lock/unlock →
-    /// `on_power`)与 idle 轮询(`setInterval(poll, 20s)` 对应项)。`deps` 参数留作 3c 路由
-    /// 依赖锚点(本片未用,前缀 `_` 抑制告警)。
+    /// 启动:置 `started=true`。3c-B 在 `lib.rs::start_tracking_system` 完成生产接线
+    /// (前台钩子 + idle 轮询 + 电源路由),本方法由 `start_tracking_system` 调用以保持
+    /// 语义完整;`started` 标志当前仅供状态确认,轮询/电源不依赖它。`deps` 为未来依赖
+    /// 锚点(当前未用,前缀 `_` 抑制告警)。
     pub fn start(&self, _deps: &mut impl TrackerDeps) {
         self.state.lock().expect("state poisoned").started = true;
     }
