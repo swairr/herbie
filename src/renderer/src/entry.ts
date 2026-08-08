@@ -26,11 +26,3 @@ if (isTauri) {
 } else {
   mountApp()
 }
-
-if (import.meta.env.DEV && isTauri) {
-  void import('./components/TauriPingDemo.vue').then(({ default: TauriPingDemo }) => {
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    createApp(TauriPingDemo).mount(host)
-  })
-}

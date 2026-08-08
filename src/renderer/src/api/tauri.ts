@@ -7,7 +7,7 @@
 //   segments_list / segments_update / journal_* / tracker_get_off_work / tracker_set_off_work
 //   export_default_dir / export_pull_day / export_write_file(切片5 已注册)
 //   shell_open_external / clipboard_read_text / dialog_pick_directory / window_quick_add_hide
-//   事件:shortcut://error  quickadd://show | hide | blur  power://event(切片0)
+//   事件:shortcut://error  quickadd://show | hide | blur
 //
 // 切片5:export/time/journal 三个导出方法改为全 TS 实现 —— 拉数据(invoke)→ 调 shared
 // markdown 纯函数生成 → 写文件(invoke)→ 返回 ExportResult。Rust 不再需要 export_export_markdown
@@ -33,10 +33,12 @@ import type {
   Todo
 } from '@shared/types'
 
-// 与 Rust `export_pull_day` 的 `ExportDayData` 对齐:segments/journal 当日数据。
+// 与 Rust `export_pull_day` 的 `ExportDayData` 对齐:segments/journal 当日数据 +
+// 当日片段关联 todo 的标题映射(免整表拉取)。
 interface ExportDayData {
   segments: Segment[]
   journal: JournalEntry[]
+  todoTitles: [string, string][]
 }
 
 // 请求类命令封装:返回 detach 函数 (() => void);Tauri 的 listen 是异步的,此处把 unlisten 异步解析后惰性调用,
@@ -107,9 +109,8 @@ export function createTauriApi(): Api {
         try {
           const dir = await resolveExportDir()
           const data = await invoke<ExportDayData>('export_pull_day', { day })
-          const todos = await invoke<Todo[]>('todos_list')
           const titles: Record<string, string> = {}
-          for (const t of todos) titles[t.id] = t.title
+          for (const [id, title] of data.todoTitles) titles[id] = title
           const content = exportTimeMarkdown(day, data.segments, titles)
           const path = await invoke<string>('export_write_file', {
             dir,

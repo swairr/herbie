@@ -4,8 +4,6 @@
 //! `GetLastInputInfo` 的 `dwTime` 是 32 位 tick,约 49.7 天回绕;对 `GetTickCount64`
 //! 的低 32 位做模 2^32 差值即得到正确的毫秒空闲时长(空闲 < 49.7 天前提)。
 
-#![allow(dead_code)]
-
 use windows::Win32::System::SystemInformation::GetTickCount64;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
 

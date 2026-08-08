@@ -24,7 +24,9 @@ pub fn update_todo_labels(
     Ok(())
 }
 
-/// 取某 todo 的所有标签,按 label 升序。
+/// 取某 todo 的所有标签,按 label 升序。TS 镜像仓储读 API,由本模块单测覆盖;
+/// 生产 renderer 走聚合路径(`todos_labels`),故仅测试使用。
+#[allow(dead_code)]
 pub fn labels_for_todo(conn: &Connection, todo_id: &str) -> Vec<String> {
     let mut stmt = conn
         .prepare("SELECT label FROM todo_labels WHERE todoId = ?1 ORDER BY label")
@@ -54,7 +56,8 @@ pub fn update_journal_labels(
     Ok(())
 }
 
-/// 取某 journal entry 的标签,按 label 升序。
+/// 取某 journal entry 的标签,按 label 升序。同 `labels_for_todo`:仅测试使用。
+#[allow(dead_code)]
 pub fn labels_for_journal(conn: &Connection, journal_id: &str) -> Vec<String> {
     let mut stmt = conn
         .prepare("SELECT label FROM journal_labels WHERE journalId = ?1 ORDER BY label")

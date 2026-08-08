@@ -7,8 +7,6 @@
 //! 闭包 `&mut` 捕获安全(无需额外互斥;评审锚点)。stop 经 `PostThreadMessage(WM_QUIT)`
 //! 唤醒消息泵后 join,线程退出前显式 UnhookWinEvent。
 
-#![allow(dead_code)]
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::mpsc;

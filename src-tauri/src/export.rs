@@ -12,12 +12,15 @@ use serde::Serialize;
 use crate::{journal::JournalEntry, segment::Segment};
 
 /// 「拉当日数据」的返回值,字段名与 renderer wrapper 的 `ExportDayData` 接口对齐
-/// (`segments` / `journal`,两者本身已是 camelCase 序列化)。
+/// (`segments` / `journal` / `todoTitles`;前两者本身已是 camelCase 序列化)。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportDayData {
     pub segments: Vec<Segment>,
     pub journal: Vec<JournalEntry>,
+    /// 当日片段关联的 todo 标题映射(`(id, title)` 对),供 renderer 聚合时用,
+    /// 免去整表拉取(对齐旧 `fetchTodoTitles` 的定向查询)。
+    pub todo_titles: Vec<(String, String)>,
 }
 
 /// 校验本地日串必须严格为 `YYYY-MM-DD`(对齐 TS `DAY_RE`)。renderer 只能传这种 day,

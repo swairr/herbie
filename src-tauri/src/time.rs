@@ -38,7 +38,13 @@ pub fn day_bounds(local_date: &str) -> Option<DayBounds> {
     let m: u32 = parts[1].parse().ok()?;
     let d: u32 = parts[2].parse().ok()?;
     // `with_ymd_and_hms` 会考虑夏令时歧义（none/ambiguous）；`.single()` 仅接受单一明确日期。
-    let start = Local.with_ymd_and_hms(y, m, d, 0, 0, 0).single()?;
+    let start = Local.with_ymd_and_hms(y, m, d, 0, 0, 0).single().or_else(|| {
+        // 对齐 JS `new Date(y, m-1, d)` 的溢出规范化:`2026-02-30` → 3 月 2 日。
+        // 仅当月不存在该日(如 2/30、4/31)时回退到「当月 1 日 + (d-1) 天」滚动;
+        // 年/月本身非法(m 不在 1..=12)仍返 None。
+        let first = Local.with_ymd_and_hms(y, m, 1, 0, 0, 0).single()?;
+        Some(first + chrono::Duration::days((d as i64) - 1))
+    })?;
     let end = start + chrono::Duration::days(1);
     let start_ms = start.timestamp_millis();
     let end_ms = end.timestamp_millis();
@@ -107,6 +113,12 @@ fn ms_to_iso_utc(ms: i64) -> String {
         .to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
+/// 统一「当前时刻/任意瞬时」的存储格式:UTC、毫秒、`Z` 后缀(等价 JS `toISOString`,
+/// 亦即 `todos::now_iso`)。全库唯一格式化入口,避免多处内联漂移破坏按字典序的时间预筛。
+pub fn iso_utc_z_millis(dt: DateTime<Utc>) -> String {
+    dt.to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,6 +157,18 @@ mod tests {
         assert!(day_bounds("bad").is_none());
         assert!(day_bounds("2026-08").is_none());
         assert!(day_bounds("abc-def-ghi").is_none());
+        // 年/月非法(m > 12)仍拒绝,与 JS 不同但 renderer 不会产这类串。
+        assert!(day_bounds("2026-13-01").is_none());
+    }
+
+    #[test]
+    fn day_bounds_normalizes_overflow_day_like_js() {
+        // JS `new Date(2026, 1, 30)` → 3 月 2 日:溢出日应滚动而非拒绝,
+        // 避免遗留库中此类日期的 journal 变不可编辑。
+        let overflow = day_bounds("2026-02-30").unwrap();
+        let normalized = day_bounds("2026-03-02").unwrap();
+        assert_eq!(overflow.start_ms, normalized.start_ms);
+        assert_eq!(overflow.end_ms, normalized.end_ms);
     }
 
     #[test]

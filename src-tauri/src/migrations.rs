@@ -53,7 +53,7 @@ pub fn run_migrations(conn: &mut Connection) -> Result<i64, rusqlite::Error> {
         tx.execute_batch(m.sql)?;
         tx.execute(
             "INSERT INTO migrations (version, appliedAt) VALUES (?1, ?2)",
-            rusqlite::params![m.version, Utc::now().to_rfc3339()],
+            rusqlite::params![m.version, crate::time::iso_utc_z_millis(Utc::now())],
         )?;
         tx.commit()?;
         last = m.version;

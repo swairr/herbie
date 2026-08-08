@@ -1,8 +1,4 @@
 #![allow(linker_messages)]
-// 过渡期(切片1)保留若干公共仓库/持有者 API(open_file、close、default_db_path、
-// settings 键常量与 default*/get_with_default 等)供后续切片(todos/labels/export)接线,
-// 当前尚未被调用 —— 与其逐个 #[allow(dead_code)],在 crate 级统一豁免。
-#![allow(dead_code)]
 
 mod db;
 mod export;
@@ -14,7 +10,6 @@ mod migrations;
 mod segment;
 mod settings;
 mod shell;
-mod spike_power;
 mod time;
 mod todos;
 mod tracker;
@@ -25,8 +20,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
-
-use spike_power::start_power_watcher;
 
 use segment::{Segment, SegmentPatch};
 use journal::{JournalEntry, JournalInput, JournalPatch};
@@ -110,16 +103,6 @@ pub fn stop_tracking_system() {
     if let Some(hook) = FOREGROUND_HOOK.lock().expect("hook mutex poisoned").take() {
         segment::stop_tracking(hook, &GlobalConn, &todos::now_iso());
     }
-}
-
-#[tauri::command]
-fn ping() -> String {
-    "pong".to_string()
-}
-
-#[tauri::command]
-fn power_subscribe(app: tauri::AppHandle) -> Result<(), String> {
-    start_power_watcher(app).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -257,9 +240,12 @@ fn export_pull_day(day: String) -> Result<ExportDayData, String> {
     export::assert_day(&day)?;
     let g = db::get();
     let conn = g.as_ref().ok_or("DB not initialized")?;
+    let segments = segment::list_segments_by_day(conn, &day, chrono::Utc::now());
+    let ids: Vec<String> = segments.iter().filter_map(|s| s.todo_id.clone()).collect();
     Ok(ExportDayData {
-        segments: segment::list_segments_by_day(conn, &day, chrono::Utc::now()),
         journal: journal::list_journals(conn, &day).map_err(|e| e.to_string())?,
+        segments,
+        todo_titles: segment::fetch_todo_titles(conn, &ids),
     })
 }
 
@@ -286,6 +272,9 @@ fn tracker_set_off_work(on: bool) -> Result<OffWorkState, String> {
 /// 用系统默认程序打开 URL(tauri-plugin-opener 2.5.x 的 `OpenerExt::open_url`)。
 #[tauri::command]
 fn shell_open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    if !shell::is_external_url_allowed(&url) {
+        return Err("unsupported url scheme".into());
+    }
     use tauri_plugin_opener::OpenerExt;
     app.opener()
         .open_url(url, None::<&str>)
@@ -293,21 +282,12 @@ fn shell_open_external(app: tauri::AppHandle, url: String) -> Result<(), String>
 }
 
 /// 读剪贴板文本(tauri-plugin-clipboard-manager 2.3.x 的 `ClipboardExt::read_text`)。
-/// 空剪贴板/无文本返回空串,对齐 Electron `clipboard.readText()` 从不抛错。
+/// 任何错误(空剪贴板/被占用/无文本)都归一为空串,对齐 Electron `clipboard.readText()`
+/// 从不抛错——Quick Add 唤起链路不受剪贴板瞬时不可用影响。
 #[tauri::command]
 fn clipboard_read_text(app: tauri::AppHandle) -> Result<String, String> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
-    match app.clipboard().read_text() {
-        Ok(text) => Ok(text),
-        Err(e) => {
-            let msg = e.to_string();
-            if shell::is_empty_clipboard_error(&msg) {
-                Ok(String::new())
-            } else {
-                Err(msg)
-            }
-        }
-    }
+    Ok(app.clipboard().read_text().unwrap_or_default())
 }
 
 /// 目录选择(tauri-plugin-dialog 2.7.x 的 `DialogExt` + `blocking_pick_folder`)。
@@ -330,10 +310,7 @@ fn window_quick_add_hide(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 pub fn run() {
-    // 沿用旧 Electron 数据路径 `%APPDATA%/herbie/herbie.db`(数据零迁移,见 db.rs)。
-    db::open_file(db::default_db_path()).expect("failed to open herbie.db");
-
-    // 创建进程级 tracker(3b 仅 off-work 命令路径在用;3c-B 由 start_tracking_system 接线).
+    // 创建进程级 tracker(3c-B 由 start_tracking_system 接线)。
     TRACKER.set(Arc::new(Tracker::new())).ok();
 
     let app = tauri::Builder::default()
@@ -342,6 +319,24 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
+            // 沿用旧 Electron 数据路径 `%APPDATA%/herbie/herbie.db`(数据零迁移,见 db.rs)。
+            // 打开/迁移失败不得静默 abort:弹原生错误框说明路径与原因后退出(而非 panic=abort 硬终止)。
+            if let Err(e) = db::open_file(db::default_db_path()) {
+                eprintln!("[db] 无法打开数据库: {e}");
+                use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+                let _ = app
+                    .handle()
+                    .dialog()
+                    .message(format!(
+                        "无法打开数据库:\n{e}\n\n路径:\n{}",
+                        db::default_db_path().display()
+                    ))
+                    .title("Herbie 错误")
+                    .kind(MessageDialogKind::Error)
+                    .blocking_show();
+                std::process::exit(1);
+            }
+
             // 3c-B 生产接线:TRACKER 已在上面提前 set,setup 内即可启动前台钩子/
             // idle 轮询/电源事件(本机 Windows 运行即真实生效)。
             #[cfg(windows)]
@@ -356,8 +351,6 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            ping,
-            power_subscribe,
             settings_get,
             settings_set,
             settings_get_all,

@@ -70,13 +70,24 @@ pub fn shortcut_error_message(accel: &str) -> String {
     format!("快捷键 \"{accel}\" 注册失败,请在设置中更换")
 }
 
-/// 判断剪贴板读取错误是否为「空剪贴板/无文本」(arboard `ContentNotAvailable`,
-/// Display 为 "The clipboard contents were not available in the requested format
-/// or the clipboard is empty.")。命中时 `clipboard_read_text` 归一为空串,
-/// 对齐 Electron `clipboard.readText()` 对空剪贴板返回 `""` 且不抛错。
-pub fn is_empty_clipboard_error(msg: &str) -> bool {
-    let lower = msg.to_lowercase();
-    lower.contains("clipboard is empty") || lower.contains("not available")
+/// 判断外部 URL 是否允许由 `shell_open_external` 打开:仅 http/https/mailto,
+/// 对齐 tauri-plugin-opener 的默认 scope(CVE-2025-20605 修复点)。手动提取 scheme,
+/// 避免引入新依赖;含 scheme 语法校验(首字母 + [A-Za-z0-9+.-])。
+pub fn is_external_url_allowed(url: &str) -> bool {
+    let colon = match url.find(':') {
+        Some(i) if i > 0 => i,
+        _ => return false,
+    };
+    let scheme = &url[..colon];
+    let mut chars = scheme.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    if !chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-')) {
+        return false;
+    }
+    matches!(scheme, "http" | "https" | "mailto")
 }
 
 // ---------------------------------------------------------------------------
@@ -326,15 +337,15 @@ mod tests {
     }
 
     #[test]
-    fn empty_clipboard_error_detection_matches_arboard() {
-        // arboard 3.6 ContentNotAvailable 的 Display。
-        assert!(is_empty_clipboard_error(
-            "The clipboard contents were not available in the requested format or the clipboard is empty."
-        ));
-        // 其他真实错误(剪贴板被占用等)不应误判为空。
-        assert!(!is_empty_clipboard_error(
-            "The native clipboard is not accessible due to being held by another party."
-        ));
-        assert!(!is_empty_clipboard_error(""));
+    fn external_url_scheme_whitelist() {
+        assert!(is_external_url_allowed("https://example.com/a#b"));
+        assert!(is_external_url_allowed("http://example.com"));
+        assert!(is_external_url_allowed("mailto:a@b.com"));
+        assert!(!is_external_url_allowed("file:///C:/evil.exe"));
+        assert!(!is_external_url_allowed("javascript:alert(1)"));
+        assert!(!is_external_url_allowed("C:\\evil.exe"));
+        assert!(!is_external_url_allowed("//relative"));
+        assert!(!is_external_url_allowed(""));
+        assert!(!is_external_url_allowed("1http://x"));
     }
 }

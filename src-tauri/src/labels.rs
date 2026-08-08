@@ -12,7 +12,10 @@ static URL_RE: OnceLock<Regex> = OnceLock::new();
 static LABEL_RE: OnceLock<Regex> = OnceLock::new();
 
 fn url_re() -> &'static Regex {
-    URL_RE.get_or_init(|| Regex::new(r"\bhttps?://[^\s]+").expect("invalid url regex"))
+    // 不用 `\b`(Rust regex 的 `\b` 是 Unicode 词边界,JS 是 ASCII,会漂移;且 crate
+    // 不支持 lookbehind)。等价 ASCII 边界的判定放在 parse_labels 里做:URL 前一字节
+    // 若为 [A-Za-z0-9_] 则视为非独立 URL(如 "ahttps://x")。
+    URL_RE.get_or_init(|| Regex::new(r"https?://[^\s]+").expect("invalid url regex"))
 }
 
 fn label_re() -> &'static Regex {
@@ -32,6 +35,18 @@ pub fn parse_labels(detail: &str) -> Vec<String> {
     }
     let ranges: Vec<(usize, usize)> = url_re()
         .find_iter(detail)
+        .filter(|m| {
+            // 等价 JS `\b`(ASCII 词边界):URL 前一字节若为 [A-Za-z0-9_] 则不是独立 URL
+            //(JS 中 "ahttps://x" 的 `\b` 不成立);中文/空格/标点等前一字符则成立。
+            let prev = m
+                .start()
+                .checked_sub(1)
+                .and_then(|i| detail.as_bytes().get(i));
+            !matches!(
+                prev,
+                Some(b) if b.is_ascii_alphanumeric() || *b == b'_'
+            )
+        })
         .map(|m| (m.start(), m.end()))
         .collect();
 
@@ -82,6 +97,16 @@ mod tests {
         assert_eq!(
             parse_labels("https://git.io/abc#def #todo"),
             vec!["todo".to_string()]
+        );
+    }
+
+    #[test]
+    fn skips_url_hash_when_url_is_adjacent_to_cjk_text() {
+        // JS `\b` 是 ASCII 词边界:紧贴中文的 URL 也应被识别,片段 #tag 不得入库。
+        assert_eq!(parse_labels("查https://example.com/p#sec"), Vec::<String>::new());
+        assert_eq!(
+            parse_labels("中文https://a.io/x#y 和 #keep"),
+            vec!["keep".to_string()]
         );
     }
 

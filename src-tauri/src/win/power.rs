@@ -1,17 +1,11 @@
-//! 生产版电源/锁屏事件投递:把切片0 `spike_power.rs`(AppHandle emit demo)改造为
-//! **回调版** —— 独立线程建不可见顶层 tool 窗口(父=桌面,WS_POPUP +
+//! 生产版电源/锁屏事件投递:独立线程建不可见顶层 tool 窗口(父=桌面,WS_POPUP +
 //! WS_EX_TOOLWINDOW + WS_EX_NOACTIVATE,不 ShowWindow),接收 `WM_POWERBROADCAST`
 //! 与 `WM_WTSSESSION_CHANGE`,映射为 `tracker::PowerEvent` 调 `cb`。
-//!
-//! 与 spike 的隔离(有意各自独立):spike 保留给 demo(独立线程/窗口 + `power://event`
-//! 前端 emit);本模块是 tracker 生产接线用,也独立开线程/窗口。窗口类名不同、消息泵
-//! 互不干扰,两个 watcher 共存无害。
+//! 这是本 crate 唯一电源实现(切片0 的 spike demo 已随评审清理移除)。
 //!
 //! 为何不用 message-only window:系统不会把 broadcast 消息(含 WM_POWERBROADCAST,
 //! 即挂起/唤醒)投递给 HWND_MESSAGE 窗口,只有注册性质的 WM_WTSSESSION_CHANGE
-//! 能到达 —— 与切片0 spike 同一结论,故照抄「不可见顶层 tool 窗口」方案。
-
-#![allow(dead_code)]
+//! 能到达 —— 故照抄「不可见顶层 tool 窗口」方案。
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};

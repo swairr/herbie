@@ -149,7 +149,9 @@ pub fn close_open(conn: &Connection, at: &str) -> i64 {
     .unwrap_or(0) as i64
 }
 
-/// `listAllSegments()`:`SELECT * ORDER BY startAt ASC`。
+/// `listAllSegments()`:`SELECT * ORDER BY startAt ASC`。TS 镜像读 API,由测试覆盖;
+/// 生产 renderer 走按日查询(`segments_list`),故仅测试使用。
+#[allow(dead_code)]
 pub fn list_all(conn: &Connection) -> rusqlite::Result<Vec<Segment>> {
     let mut stmt = conn.prepare("SELECT * FROM segments ORDER BY startAt ASC")?;
     let rows = stmt.query_map([], row_to_segment)?;

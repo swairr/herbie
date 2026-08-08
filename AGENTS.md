@@ -41,8 +41,7 @@
 - 前台窗口钩子 / 空闲检测 / 电源事件全部在 `src-tauri/src/win/`（`windows-rs`）:
   `foreground.rs`（`SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` + 进程名）;`idle.rs`
   （`GetLastInputInfo`）;`power.rs`（隐藏窗口 `WM_POWERBROADCAST` 睡眠/唤醒 +
-  `WTSRegisterSessionNotification` 锁屏/解锁）。另有 `spike_power.rs` 作为切片0 的
-  spike 遗留。
+  `WTSRegisterSessionNotification` 锁屏/解锁）。这是电源事件的唯一实现。
 - Tracker 状态机在 `src-tauri/src/tracker.rs`（空闲轮询 + 下班,依赖注入以保持可单元
   测试）;前台事件与电源事件经通知器喂给 Tracker。聚合在 `src/shared/segments-agg.ts`
   为纯函数;跨天切分在 `src/shared/time.ts` 为纯函数（`splitAtMidnight`,与 Rust 对拍）。

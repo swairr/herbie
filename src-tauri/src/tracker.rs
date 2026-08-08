@@ -16,7 +16,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use chrono::{DateTime, Duration, Local, SecondsFormat, Utc};
+use chrono::{DateTime, Duration, Local, Utc};
 use serde::Serialize;
 
 use crate::hook::{HookNotifier, WinHookEvent};
@@ -57,9 +57,11 @@ impl ConnAccess for GlobalConn {
 }
 
 /// test 连接器:锁局部 `Arc<Mutex<Connection>>` 后借 `&Connection`。各测试独立持有的局部
-/// 连接避免 cargo test 多线程并行下共享全局单例的竞态(切片1 教训)。
+/// 连接避免 cargo test 多线程并行下共享全局单例的竞态(切片1 教训)。仅测试使用。
+#[allow(dead_code)]
 pub struct LocalConn(Arc<Mutex<rusqlite::Connection>>);
 impl LocalConn {
+    #[allow(dead_code)]
     pub fn new(conn: Arc<Mutex<rusqlite::Connection>>) -> Self {
         Self(conn)
     }
@@ -151,9 +153,9 @@ impl Tracker {
         let thr = self.threshold(conn);
         if idle_sec >= thr && !st.was_idle {
             // 刚进 idle:在"最后一次输入"瞬时关掉当前活动段,并从同一瞬时开 idle 段。
-            let last_input_iso = (now - Duration::seconds(idle_sec as i64))
-                .with_timezone(&Utc)
-                .to_rfc3339_opts(SecondsFormat::Millis, true);
+            let last_input_iso = crate::time::iso_utc_z_millis(
+                (now - Duration::seconds(idle_sec as i64)).with_timezone(&Utc),
+            );
             conn.lock_conn(|c| {
                 let _ = segment::close_open(c, &last_input_iso);
                 let _ = segment::open_segment(
@@ -170,9 +172,7 @@ impl Tracker {
             st.was_idle = true;
         } else if idle_sec == 0 && st.was_idle {
             // 从 idle 返岗:用"当前时刻"关闭开放 idle 段。
-            let iso = now
-                .with_timezone(&Utc)
-                .to_rfc3339_opts(SecondsFormat::Millis, true);
+            let iso = crate::time::iso_utc_z_millis(now.with_timezone(&Utc));
             conn.lock_conn(|c| {
                 let _ = segment::close_open(c, &iso);
             });

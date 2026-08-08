@@ -1,13 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "切片 0：默认能力，放开 core 默认权限供 ping/power 事件自测；切片 6 追加外壳插件默认权限（global-shortcut/dialog/opener/clipboard）",
+  "description": "默认能力：core 默认权限 + 外壳插件最小面。opener/dialog 仅由 Rust 侧自定义命令调用（不经 JS IPC），故不授予插件默认集（最小权限，见评审）",
   "windows": ["main", "quickadd"],
-  "permissions": [
-    "core:default",
-    "global-shortcut:default",
-    "dialog:default",
-    "opener:default",
-    "clipboard-manager:default"
-  ]
+  "permissions": ["core:default"]
 }

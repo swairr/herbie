@@ -8,10 +8,9 @@
 
 use rusqlite::{params, Connection};
 
-/// 键名常量(对齐 TS `SettingsKey = keyof Settings`)。
+/// 键名常量(对齐 TS `SettingsKey = keyof Settings`;renderer 侧 exportDir/draft 以
+/// 字符串字面量读写,此处只保留 Rust 侧用到的键)。
 pub const KEY_SHORTCUT: &str = "shortcut";
-pub const KEY_EXPORT_DIR: &str = "exportDir";
-pub const KEY_DRAFT: &str = "draft";
 pub const KEY_IDLE_THRESHOLD_SEC: &str = "idleThresholdSec";
 pub const KEY_SHORTCUT_ERROR: &str = "shortcutError";
 
@@ -46,11 +45,6 @@ pub fn set(conn: &Connection, key: &str, value: &str) -> Result<(), rusqlite::Er
         params![key, value],
     )?;
     Ok(())
-}
-
-/// `getDefault(key)`:未知键与默认为 null 的键都返空串。
-pub fn default_value(key: &str) -> String {
-    default_for(key)
 }
 
 /// `getSettingWithDefault(key)`:get ?? default。

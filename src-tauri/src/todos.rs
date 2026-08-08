@@ -7,7 +7,7 @@
 //! 仓储层取 `&Connection`/`&mut Connection` 参数,不自行锁全局(对齐切片1 Settings 模式)。
 //! `create_todo`/`update_todo` 在单个事务内写入 todos + todo_labels,保证与标签重解析原子。
 
-use chrono::{SecondsFormat, Utc};
+use chrono::Utc;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -50,7 +50,7 @@ pub struct LabelCount {
 
 /// 等价 JS `new Date().toISOString()`:毫秒精度、`Z` 后缀(非 `+00:00`),与既有数据格式一致。
 pub fn now_iso() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
+    crate::time::iso_utc_z_millis(Utc::now())
 }
 
 fn row_to_todo(r: &rusqlite::Row) -> rusqlite::Result<Todo> {
