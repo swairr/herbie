@@ -61,11 +61,11 @@ jobs:
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
-      - name: Build NSIS installer
-        run: pnpm build
+      - name: Build (no bundle)
+        run: pnpm tauri build --no-bundle
 
-      - name: Compress installer
-        run: Compress-Archive -Path src-tauri\target\release\bundle\nsis\*.exe -DestinationPath Herbie-win-x64.zip
+      - name: Compress portable exe
+        run: Compress-Archive -Path src-tauri\target\release\herbie.exe -DestinationPath Herbie-win-x64.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
