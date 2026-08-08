@@ -72,9 +72,13 @@ pub fn start_tracking_system(_app: &tauri::AppHandle) {
         .spawn(move || {
             let mut deps = ProdDeps;
             loop {
-                thread::sleep(Duration::from_secs(20));
-                if POLL_STOP.load(Ordering::SeqCst) {
-                    break;
+                // 分片睡眠:退出时 stop_tracking_system 置 POLL_STOP 后 join,
+                // 需在本片内醒来检查标志(否则 join 最多等满 20s,退出卡顿)。
+                for _ in 0..20 {
+                    thread::sleep(Duration::from_millis(1000));
+                    if POLL_STOP.load(Ordering::SeqCst) {
+                        return;
+                    }
                 }
                 tracker_for_poll.poll(&GlobalConn, &mut deps);
             }
@@ -379,14 +383,21 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|app, event| {
-        if let tauri::RunEvent::ExitRequested { .. } = event {
+    let exit_code = app.run_return(|app, event| {
+        if let tauri::RunEvent::ExitRequested { code: _, .. } = event {
             // 唯一退出路径是托盘「退出」;此处拆除追踪(join 轮询 + 关开放段/前台钩子)、
             // 反注册快捷键。DB 由进程退出回收(WAL 安全)。
+            // 注:不在此处 destroy 窗口,否则会触发 tauri 第二次 ExitRequested(code=None),
+            // 干扰退出码(Cli 侧已知行为)。窗口在 RunEvent::Exit 的 cleanup_before_exit 中
+            // 自动隐藏;退出时 WebView2 的 `Chrome_WidgetWin_0` 类注销 1412 日志是上游
+            // 无害错误(tauri #7606 upsteam),不影响退出码。
             shell::QUITTING.store(true, std::sync::atomic::Ordering::SeqCst);
             #[cfg(windows)]
             stop_tracking_system();
             shell::unregister_shortcut(app);
+        } else if let tauri::RunEvent::Exit = event {
+            let _ = event;
         }
     });
+    std::process::exit(exit_code);
 }

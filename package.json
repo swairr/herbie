@@ -4,6 +4,7 @@
   "description": "H.E.R.B.I.E — 个人待办助手",
   "author": "",
   "license": "MIT",
+  "type": "module",
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"

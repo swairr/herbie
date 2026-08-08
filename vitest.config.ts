@@ -9,7 +9,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@shared': resolve(__dirname, 'src/shared')
+      '@shared': resolve(import.meta.dirname, 'src/shared')
     }
   }
 })

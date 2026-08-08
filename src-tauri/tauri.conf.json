@@ -6,7 +6,7 @@
   "build": {
     "frontendDist": "../dist/renderer",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "pnpm dev:renderer",
+    "beforeDevCommand": "vite --config vite.renderer.config.ts",
     "beforeBuildCommand": "pnpm build:renderer"
   },
   "app": {

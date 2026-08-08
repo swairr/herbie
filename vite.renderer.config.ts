@@ -3,17 +3,17 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
-  root: resolve(__dirname, 'src/renderer'),
+  root: resolve(import.meta.dirname, 'src/renderer'),
   base: './',
   resolve: {
     alias: {
-      '@renderer': resolve(__dirname, 'src/renderer/src'),
-      '@shared': resolve(__dirname, 'src/shared')
+      '@renderer': resolve(import.meta.dirname, 'src/renderer/src'),
+      '@shared': resolve(import.meta.dirname, 'src/shared')
     }
   },
   plugins: [vue()],
   build: {
-    outDir: resolve(__dirname, 'dist/renderer'),
+    outDir: resolve(import.meta.dirname, 'dist/renderer'),
     emptyOutDir: true
   },
   server: {
