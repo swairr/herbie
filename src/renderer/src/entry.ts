@@ -2,6 +2,11 @@ import { createApp } from 'vue'
 import './style.css'
 import App from './App.vue'
 
+// 桌面应用不弹浏览器默认右键菜单:WebView2 在派发 DOM `contextmenu` 事件被
+// preventDefault 后不再显示默认上下文菜单(tauri 2.x 未透传 wry 的
+// `with_default_context_menus`,JS 拦截为跨平台兜底)。
+document.addEventListener('contextmenu', (e) => e.preventDefault())
+
 // 在 Tauri 环境(`pnpm tauri dev`/打包运行)挂载前注入形状等价的薄封装 `window.api`;
 // 非 Tauri 环境(纯浏览器构建)标志为 false,不注入、直接挂载。
 // 用 then 链而非 top-level await,以兼容 vite 默认构建目标(es2020),并在 mount 之前完成注入。
