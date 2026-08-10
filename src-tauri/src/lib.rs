@@ -183,6 +183,14 @@ fn todos_labels() -> Result<Vec<LabelCount>, String> {
     todos::list_todo_labels(conn).map_err(|e| e.to_string())
 }
 
+/// 拖拽排序:把 pending 待办 `id` 移到 `before_id` 之前;`before_id`=null 移到末尾。
+#[tauri::command]
+fn todos_move(id: String, before_id: Option<String>) -> Result<Todo, String> {
+    let mut g = db::get();
+    let conn = g.as_mut().ok_or("DB not initialized")?;
+    todos::move_todo(conn, &id, before_id.as_deref())
+}
+
 #[tauri::command]
 fn journal_list(day: String) -> Result<Vec<JournalEntry>, String> {
     let g = db::get();
@@ -364,6 +372,7 @@ pub fn run() {
             todos_toggle,
             todos_soft_delete,
             todos_labels,
+            todos_move,
             journal_list,
             journal_create,
             journal_update,

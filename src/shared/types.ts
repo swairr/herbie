@@ -6,6 +6,7 @@ export interface Todo {
   updatedAt: string
   completedAt: string | null
   deletedAt: string | null
+  sortOrder: number
 }
 
 export interface LabelCount {
@@ -103,6 +104,7 @@ export interface Api {
     toggle: (id: string, done: boolean) => Promise<Todo>
     softDelete: (id: string) => Promise<void>
     labels: () => Promise<LabelCount[]>
+    move: (id: string, beforeId: string | null) => Promise<Todo>
   }
   settings: {
     get: (key: SettingsKey) => Promise<string | null>

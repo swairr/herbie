@@ -11,6 +11,7 @@ function make(partial: Partial<Todo>): Todo {
     updatedAt: '2026-08-03T00:00:00+08:00',
     completedAt: null,
     deletedAt: null,
+    sortOrder: 0,
     ...partial
   }
 }

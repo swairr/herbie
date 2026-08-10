@@ -20,6 +20,12 @@ const filter = computed<TodoFilter>(() => ({
   labels: selected.value.size ? Array.from(selected.value) : undefined
 }))
 
+const dragId = ref<string | null>(null)
+const dropHint = ref<{ id: string; pos: 'before' | 'after' } | null>(null)
+
+// 标签过滤时展示的是全局列表的子集,局部拖拽会破坏不可见项间的相对顺序,故禁用
+const canDrag = computed(() => selected.value.size === 0)
+
 async function refresh(): Promise<void> {
   all.value = await window.api.todos.list(filter.value)
   labels.value = await window.api.todos.labels()
@@ -33,6 +39,107 @@ async function toggleLabel(label: string): Promise<void> {
 }
 
 const grouped = computed(() => groupItems(all.value))
+
+function isHint(id: string, pos: 'before' | 'after'): boolean {
+  return dropHint.value?.id === id && dropHint.value.pos === pos
+}
+
+function onDragStart(t: Todo, e: DragEvent): void {
+  dragId.value = t.id
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', t.id)
+  }
+}
+
+function onDragEnd(): void {
+  dragId.value = null
+  dropHint.value = null
+}
+
+function onDragOverItem(t: Todo, e: DragEvent): void {
+  if (!dragId.value || dragId.value === t.id) return
+  const el = e.currentTarget as HTMLElement | null
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  const pos = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+  if (dropHint.value?.id !== t.id || dropHint.value.pos !== pos) {
+    dropHint.value = { id: t.id, pos }
+  }
+}
+
+async function moveTodo(beforeId: string | null): Promise<void> {
+  const id = dragId.value
+  dragId.value = null
+  dropHint.value = null
+  if (!id) return
+  try {
+    await window.api.todos.move(id, beforeId)
+  } finally {
+    await refresh()
+  }
+}
+
+function onDrop(t: Todo, e: DragEvent): void {
+  e.preventDefault()
+  const id = dragId.value
+  const hint = dropHint.value
+  if (!id || !hint || id === t.id) {
+    onDragEnd()
+    return
+  }
+  const list = grouped.value.pending
+  const targetIdx = list.findIndex((x) => x.id === t.id)
+  const draggedIdx = list.findIndex((x) => x.id === id)
+  if (targetIdx < 0 || draggedIdx < 0) {
+    onDragEnd()
+    return
+  }
+  if (hint.pos === 'before' && draggedIdx === targetIdx - 1) {
+    onDragEnd()
+    return
+  }
+  if (hint.pos === 'after' && draggedIdx === targetIdx + 1) {
+    onDragEnd()
+    return
+  }
+  let beforeId: string | null
+  if (hint.pos === 'before') {
+    beforeId = t.id
+  } else {
+    const next = list.slice(targetIdx + 1).find((x) => x.id !== id)
+    beforeId = next ? next.id : null
+  }
+  void moveTodo(beforeId)
+}
+
+function onDropListEnd(e: DragEvent): void {
+  e.preventDefault()
+  const id = dragId.value
+  if (!id) return
+  // 按光标位置在 pending 项中解析插入点:第一个"光标在上半部"的项即插入点之前;
+  // 遍历完仍无命中(光标在最后一项下半部之后,含 done 区)则移到末尾。
+  const scope = e.currentTarget as HTMLElement | null
+  const els = Array.from((scope ?? document).querySelectorAll<HTMLElement>('[data-todo-id]'))
+  let beforeId: string | null = null
+  for (const el of els) {
+    const rect = el.getBoundingClientRect()
+    if (e.clientY <= rect.top + rect.height / 2) {
+      beforeId = el.dataset.todoId ?? null
+      break
+    }
+  }
+  const list = grouped.value.pending
+  if (beforeId === id) {
+    onDragEnd()
+    return
+  }
+  if (beforeId === null && list.length && list[list.length - 1].id === id) {
+    onDragEnd()
+    return
+  }
+  void moveTodo(beforeId)
+}
 
 function expand(t: Todo): void {
   const s = new Set(expanded.value)
@@ -135,12 +242,23 @@ onMounted(async () => {
       </button>
     </section>
 
-    <section class="list">
+    <section class="list" @dragover.prevent @drop="onDropListEnd">
       <article
         v-for="t in grouped.pending"
         :key="t.id"
         class="item"
-        :class="{ expanded: expanded.has(t.id) }"
+        :class="{
+          expanded: expanded.has(t.id),
+          dragging: dragId === t.id,
+          'drop-before': isHint(t.id, 'before'),
+          'drop-after': isHint(t.id, 'after')
+        }"
+        :draggable="canDrag && !expanded.has(t.id)"
+        :data-todo-id="t.id"
+        @dragstart="onDragStart(t, $event)"
+        @dragend="onDragEnd"
+        @dragover.prevent="onDragOverItem(t, $event)"
+        @drop.stop="onDrop(t, $event)"
       >
         <div class="row" @click="expand(t)">
           <input class="check" type="checkbox" :checked="false" @click.stop="toggleDone(t, true)" />
@@ -258,6 +376,18 @@ onMounted(async () => {
 }
 .item.expanded {
   border-color: var(--accent);
+}
+.item[draggable='true'] {
+  cursor: grab;
+}
+.item.dragging {
+  opacity: 0.4;
+}
+.item.drop-before {
+  box-shadow: 0 -2px 0 0 var(--accent);
+}
+.item.drop-after {
+  box-shadow: 0 2px 0 0 var(--accent);
 }
 .row {
   display: flex;

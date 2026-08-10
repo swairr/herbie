@@ -22,6 +22,7 @@ pub struct Todo {
     pub updated_at: String,
     pub completed_at: Option<String>,
     pub deleted_at: Option<String>,
+    pub sort_order: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -62,12 +63,13 @@ fn row_to_todo(r: &rusqlite::Row) -> rusqlite::Result<Todo> {
         updated_at: r.get("updatedAt")?,
         completed_at: r.get("completedAt")?,
         deleted_at: r.get("deletedAt")?,
+        sort_order: r.get("sortOrder")?,
     })
 }
 
 fn fetch_todo(conn: &Connection, id: &str) -> rusqlite::Result<Todo> {
     conn.query_row(
-        "SELECT id, title, detail, createdAt, updatedAt, completedAt, deletedAt FROM todos WHERE id = ?1",
+        "SELECT id, title, detail, createdAt, updatedAt, completedAt, deletedAt, sortOrder FROM todos WHERE id = ?1",
         params![id],
         row_to_todo,
     )
@@ -75,12 +77,15 @@ fn fetch_todo(conn: &Connection, id: &str) -> rusqlite::Result<Todo> {
 
 /// `listTodos(filter?)`:`SELECT * FROM todos WHERE deletedAt IS NULL`
 /// [+ `AND id IN (SELECT todoId FROM todo_labels WHERE label IN (?,...))]`
-/// + `ORDER BY (completedAt IS NULL) DESC, completedAt DESC, createdAt DESC`。
+/// + `ORDER BY (completedAt IS NULL) DESC,
+///             CASE WHEN completedAt IS NULL THEN sortOrder END ASC,
+///             completedAt DESC, createdAt DESC`。
+/// pending 按手动排序 `sortOrder` 升序(拖拽排序,迁移 0004);done 仍按 completedAt 降序。
 pub fn list_todos(
     conn: &Connection,
     filter: Option<&TodoFilter>,
 ) -> rusqlite::Result<Vec<Todo>> {
-    let mut sql = String::from("SELECT id, title, detail, createdAt, updatedAt, completedAt, deletedAt FROM todos WHERE deletedAt IS NULL");
+    let mut sql = String::from("SELECT id, title, detail, createdAt, updatedAt, completedAt, deletedAt, sortOrder FROM todos WHERE deletedAt IS NULL");
     let mut binds: Vec<String> = Vec::new();
     if let Some(f) = filter {
         if let Some(labels) = &f.labels {
@@ -94,7 +99,11 @@ pub fn list_todos(
             }
         }
     }
-    sql.push_str(" ORDER BY (completedAt IS NULL) DESC, completedAt DESC, createdAt DESC");
+    sql.push_str(
+        " ORDER BY (completedAt IS NULL) DESC, \
+         CASE WHEN completedAt IS NULL THEN sortOrder END ASC, \
+         completedAt DESC, createdAt DESC",
+    );
 
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(
@@ -124,6 +133,7 @@ pub fn list_todo_labels(conn: &Connection) -> rusqlite::Result<Vec<LabelCount>> 
 }
 
 /// `createTodo(input)`:id=randomUUID;now;title=trim;detail 不 trim;事务内 INSERT + updateTodoLabels(parseLabels(detail));回读。
+/// `sortOrder` = 当前 pending 最小值 − 1(新待办置顶,与迁移前 createdAt DESC 头插一致);空列表取 1。
 pub fn create_todo(
     conn: &mut Connection,
     input: &TodoInput,
@@ -135,10 +145,18 @@ pub fn create_todo(
     let labels = crate::labels::parse_labels(detail);
     {
         let tx = conn.transaction()?;
+        let next_order: f64 = tx
+            .query_row(
+                "SELECT MIN(sortOrder) FROM todos WHERE deletedAt IS NULL AND completedAt IS NULL",
+                [],
+                |r| r.get::<_, Option<f64>>(0),
+            )?
+            .map(|min| min - 1.0)
+            .unwrap_or(1.0);
         tx.execute(
-            "INSERT INTO todos (id, title, detail, createdAt, updatedAt, completedAt, deletedAt)
-             VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL)",
-            params![id, title, detail, &now, &now],
+            "INSERT INTO todos (id, title, detail, createdAt, updatedAt, completedAt, deletedAt, sortOrder)
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6)",
+            params![id, title, detail, &now, &now, next_order],
         )?;
         crate::labels_store::update_todo_labels(&tx, &id, &labels)?;
         tx.commit()?;
@@ -199,6 +217,75 @@ pub fn soft_delete_todo(conn: &Connection, id: &str) -> rusqlite::Result<()> {
         params![now, now, id],
     )?;
     Ok(())
+}
+
+/// 相邻 sortOrder 间隙低于该阈值时整体重排为 1..n(防反复取中点耗尽浮点精度)。
+const MIN_GAP: f64 = 1e-6;
+
+/// pending 的当前展示顺序(id + sortOrder)。直接复用 `list_todos` 的结果作为唯一事实来源,
+/// 避免与展示排序出现两份实现漂移(拖拽落点依赖此顺序)。
+fn pending_order(conn: &Connection) -> rusqlite::Result<Vec<(String, f64)>> {
+    Ok(list_todos(conn, None)?
+        .into_iter()
+        .filter(|t| t.completed_at.is_none())
+        .map(|t| (t.id, t.sort_order))
+        .collect())
+}
+
+/// `moveTodo(id, beforeId)`:把 pending 待办 `id` 移到 `before` 之前(`before`=None 移到末尾),
+/// 新 sortOrder 取相邻中点、首前/末后取 ±1;相邻间隙低于阈值时同事务内先整体重排 1..n。
+/// `id`/`before` 不存在或非 pending 报 `todo not found: <id>`;`before == id` 为无操作。
+pub fn move_todo(conn: &mut Connection, id: &str, before: Option<&str>) -> Result<Todo, String> {
+    if let Some(b) = before {
+        if b == id {
+            return fetch_todo(conn, id).map_err(|e| e.to_string());
+        }
+    }
+    let mut order = pending_order(conn).map_err(|e| e.to_string())?;
+    if !order.iter().any(|(rid, _)| rid == id) {
+        return Err(format!("todo not found: {}", id));
+    }
+    if let Some(b) = before {
+        if !order.iter().any(|(rid, _)| rid == b) {
+            return Err(format!("todo not found: {}", b));
+        }
+    }
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    if order.windows(2).any(|w| w[1].1 - w[0].1 < MIN_GAP) {
+        for (i, (rid, _)) in order.iter().enumerate() {
+            tx.execute(
+                "UPDATE todos SET sortOrder = ?1 WHERE id = ?2",
+                params![(i + 1) as f64, rid],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        for (i, item) in order.iter_mut().enumerate() {
+            item.1 = (i + 1) as f64;
+        }
+    }
+    let others: Vec<&(String, f64)> = order.iter().filter(|(rid, _)| rid != id).collect();
+    let new_order = match before {
+        None => others.last().map(|(_, o)| o + 1.0).unwrap_or(1.0),
+        Some(b) => {
+            let i = others
+                .iter()
+                .position(|(rid, _)| rid == b)
+                .expect("presence checked above");
+            let hi = others[i].1;
+            if i == 0 {
+                hi - 1.0
+            } else {
+                (others[i - 1].1 + hi) / 2.0
+            }
+        }
+    };
+    tx.execute(
+        "UPDATE todos SET sortOrder = ?1 WHERE id = ?2",
+        params![new_order, id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    fetch_todo(conn, id).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -364,6 +451,91 @@ mod tests {
             detail: Some("x".into()),
         });
         assert!(res.is_err());
+    }
+
+    fn pending_ids(conn: &Connection) -> Vec<String> {
+        list_todos(conn, None)
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.completed_at.is_none())
+            .map(|t| t.id)
+            .collect()
+    }
+
+    fn make_abc(conn: &mut Connection) -> (Todo, Todo, Todo) {
+        let a = create_todo(conn, &TodoInput { title: "a".into(), detail: String::new() }).unwrap();
+        wait();
+        let b = create_todo(conn, &TodoInput { title: "b".into(), detail: String::new() }).unwrap();
+        wait();
+        let c = create_todo(conn, &TodoInput { title: "c".into(), detail: String::new() }).unwrap();
+        (a, b, c)
+    }
+
+    #[test]
+    fn new_todo_goes_to_top_and_order_is_stable() {
+        let mut conn = make();
+        let (a, b, c) = make_abc(&mut conn);
+        assert_eq!(pending_ids(&conn), vec![c.id.clone(), b.id.clone(), a.id.clone()]);
+    }
+
+    #[test]
+    fn move_todo_before_middle_item() {
+        let mut conn = make();
+        let (a, b, c) = make_abc(&mut conn);
+        // [c, b, a] → 把 c 移到 a 之前 → [b, c, a]
+        move_todo(&mut conn, &c.id, Some(&a.id)).unwrap();
+        assert_eq!(pending_ids(&conn), vec![b.id.clone(), c.id.clone(), a.id.clone()]);
+    }
+
+    #[test]
+    fn move_todo_to_top_and_to_end() {
+        let mut conn = make();
+        let (a, b, c) = make_abc(&mut conn);
+        // [c, b, a] → a 置顶 → [a, c, b]
+        move_todo(&mut conn, &a.id, Some(&c.id)).unwrap();
+        assert_eq!(pending_ids(&conn), vec![a.id.clone(), c.id.clone(), b.id.clone()]);
+        // a 移到末尾 → [c, b, a]
+        move_todo(&mut conn, &a.id, None).unwrap();
+        assert_eq!(pending_ids(&conn), vec![c.id.clone(), b.id.clone(), a.id.clone()]);
+    }
+
+    #[test]
+    fn move_todo_noop_when_before_is_self() {
+        let mut conn = make();
+        let (a, b, c) = make_abc(&mut conn);
+        move_todo(&mut conn, &b.id, Some(&b.id)).unwrap();
+        assert_eq!(pending_ids(&conn), vec![c.id, b.id, a.id]);
+    }
+
+    #[test]
+    fn move_todo_errors_on_unknown_or_done_todos() {
+        let mut conn = make();
+        let (a, b, c) = make_abc(&mut conn);
+        assert!(move_todo(&mut conn, "nope", Some(&a.id)).is_err());
+        assert!(move_todo(&mut conn, &a.id, Some("nope")).is_err());
+        toggle_todo(&conn, &c.id, true).unwrap();
+        assert!(move_todo(&mut conn, &c.id, Some(&a.id)).is_err());
+        assert!(move_todo(&mut conn, &a.id, Some(&c.id)).is_err());
+    }
+
+    #[test]
+    fn move_todo_renormalizes_when_gaps_are_exhausted() {
+        let mut conn = make();
+        let (a, b, c) = make_abc(&mut conn);
+        // 人为制造零间隙:[c=1.0, b=1.0, a=2.0]
+        conn.execute("UPDATE todos SET sortOrder = 1.0 WHERE id = ?1", params![c.id]).unwrap();
+        conn.execute("UPDATE todos SET sortOrder = 1.0 WHERE id = ?1", params![b.id]).unwrap();
+        conn.execute("UPDATE todos SET sortOrder = 2.0 WHERE id = ?1", params![a.id]).unwrap();
+        // 触发重排后仍按展示序(createdAt DESC: [c, b, a])归一为 1..3,移动 a 到 c 前生效
+        move_todo(&mut conn, &a.id, Some(&c.id)).unwrap();
+        assert_eq!(pending_ids(&conn), vec![a.id.clone(), c.id.clone(), b.id.clone()]);
+        let orders: Vec<f64> = list_todos(&conn, None)
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.completed_at.is_none())
+            .map(|t| t.sort_order)
+            .collect();
+        assert!(orders.windows(2).all(|w| w[1] - w[0] >= 1e-6), "gaps restored: {:?}", orders);
     }
 
     #[test]

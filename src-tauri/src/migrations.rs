@@ -9,16 +9,18 @@ use rusqlite::Connection;
 const SQL_0001: &str = include_str!("../../migrations/0001.sql");
 const SQL_0002: &str = include_str!("../../migrations/0002.sql");
 const SQL_0003: &str = include_str!("../../migrations/0003.sql");
+const SQL_0004: &str = include_str!("../../migrations/0004.sql");
 
 struct Migration {
     version: i64,
     sql: &'static str,
 }
 
-const MIGRATIONS: [Migration; 3] = [
+const MIGRATIONS: [Migration; 4] = [
     Migration { version: 1, sql: SQL_0001 },
     Migration { version: 2, sql: SQL_0002 },
     Migration { version: 3, sql: SQL_0003 },
+    Migration { version: 4, sql: SQL_0004 },
 ];
 
 /// 在给定连接上执行所有未应用的迁移,返回最后应用的版本号。
@@ -109,10 +111,11 @@ mod tests {
         run_migrations(&mut conn).expect("rerun should not error");
         let mut stmt = conn.prepare("SELECT version FROM migrations ORDER BY version").unwrap();
         let rows: Vec<i64> = stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 4);
         assert_eq!(rows[0], 1);
         assert_eq!(rows[1], 2);
         assert_eq!(rows[2], 3);
+        assert_eq!(rows[3], 4);
     }
 
     #[test]
@@ -254,6 +257,40 @@ mod tests {
         assert!(title.is_none());
         assert_eq!(body, "日记正文");
         assert_eq!(date, "2026-08-04");
+    }
+
+    #[test]
+    fn v4_backfills_pending_todos_sort_order_by_created_at_desc_rank() {
+        let conn = make();
+        // 只建 v1 schema,插入数据后单独跑 0004,验证回填语义。
+        conn.execute_batch(SQL_0001).unwrap();
+        conn.execute(
+            "INSERT INTO todos (id, title, detail, createdAt, updatedAt, completedAt, deletedAt)
+             VALUES ('old', 'old', '', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL, NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO todos (id, title, detail, createdAt, updatedAt, completedAt, deletedAt)
+             VALUES ('new', 'new', '', '2026-02-01T00:00:00Z', '2026-02-01T00:00:00Z', NULL, NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO todos (id, title, detail, createdAt, updatedAt, completedAt, deletedAt)
+             VALUES ('done', 'done', '', '2026-03-01T00:00:00Z', '2026-03-01T00:00:00Z', '2026-03-02T00:00:00Z', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(SQL_0004).unwrap();
+        let order = |id: &str| -> f64 {
+            conn.query_row("SELECT sortOrder FROM todos WHERE id = ?1", params![id], |r| r.get(0))
+                .unwrap()
+        };
+        // 既有展示顺序为 createdAt DESC:new 在顶(1),old 其次(2);已完成不参与。
+        assert_eq!(order("new"), 1.0);
+        assert_eq!(order("old"), 2.0);
+        assert_eq!(order("done"), 0.0);
     }
 
     #[test]

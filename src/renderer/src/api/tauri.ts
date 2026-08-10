@@ -2,7 +2,7 @@
 // 内部走 Tauri `invoke`(请求类命令)+ `listen`(事件类),让 Vue 组件零改动即可在 Tauri 运行。
 //
 // 命令名/事件名严格遵循跨切片命名契约(见 `.kilo/plans/...md`):
-//   todos_list / todos_create / todos_update / todos_toggle / todos_soft_delete / todos_labels
+//   todos_list / todos_create / todos_update / todos_toggle / todos_soft_delete / todos_labels / todos_move
 //   settings_get / settings_set / settings_get_all(切片1 已注册)
 //   segments_list / segments_update / journal_* / tracker_get_off_work / tracker_set_off_work
 //   export_default_dir / export_pull_day / export_write_file(切片5 已注册)
@@ -71,7 +71,8 @@ export function createTauriApi(): Api {
       update: (id, patch) => invoke<Todo>('todos_update', { id, patch }),
       toggle: (id, done) => invoke<Todo>('todos_toggle', { id, done }),
       softDelete: (id) => invoke<void>('todos_soft_delete', { id }),
-      labels: () => invoke<LabelCount[]>('todos_labels')
+      labels: () => invoke<LabelCount[]>('todos_labels'),
+      move: (id, beforeId) => invoke<Todo>('todos_move', { id, beforeId })
     },
     settings: {
       get: (key) => invoke<string | null>('settings_get', { key }),
