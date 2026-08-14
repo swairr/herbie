@@ -253,14 +253,19 @@ onMounted(async () => {
           'drop-before': isHint(t.id, 'before'),
           'drop-after': isHint(t.id, 'after')
         }"
-        :draggable="canDrag && !expanded.has(t.id)"
         :data-todo-id="t.id"
-        @dragstart="onDragStart(t, $event)"
-        @dragend="onDragEnd"
         @dragover.prevent="onDragOverItem(t, $event)"
         @drop.stop="onDrop(t, $event)"
       >
         <div class="row" @click="expand(t)">
+          <span
+            v-if="canDrag && !expanded.has(t.id)"
+            class="drag-handle"
+            :draggable="true"
+            title="拖动排序"
+            @dragstart="onDragStart(t, $event)"
+            @dragend="onDragEnd"
+          >⠿</span>
           <input class="check" type="checkbox" :checked="false" @click.stop="toggleDone(t, true)" />
           <div class="title-area">
             <div class="title">{{ t.title }}</div>
@@ -377,11 +382,28 @@ onMounted(async () => {
 .item.expanded {
   border-color: var(--accent);
 }
-.item[draggable='true'] {
-  cursor: grab;
-}
 .item.dragging {
   opacity: 0.4;
+}
+.drag-handle {
+  cursor: grab;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.item:hover .drag-handle {
+  opacity: 0.6;
+}
+.drag-handle:hover {
+  opacity: 1;
+}
+.drag-handle:active {
+  cursor: grabbing;
 }
 .item.drop-before {
   box-shadow: 0 -2px 0 0 var(--accent);
