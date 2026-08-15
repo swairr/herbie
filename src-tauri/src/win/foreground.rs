@@ -6,6 +6,11 @@
 //! (即该专用线程)被派发,而非钩子源进程 —— 因此回调、去重状态、pid 缓存全部单线程访问,
 //! 闭包 `&mut` 捕获安全(无需额外互斥;评审锚点)。stop 经 `PostThreadMessage(WM_QUIT)`
 //! 唤醒消息泵后 join,线程退出前显式 UnhookWinEvent。
+//!
+//! IME/工具窗过滤:`is_ime_tool_window` 丢弃两类噪声窗口 —— (1) TSF 输入法 UI 窗口
+//! (类名 `CiceroUIWndFrame`,现代输入法候选词/语言条统一类名,零维护);(2) 不激活且
+//! 不进任务栏/ALT+TAB 且无标题的工具窗(IME 悬浮窗等)。过滤在去重**之前**进行,
+//! 避免 IME 事件污染去重状态。
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -23,9 +28,10 @@ use windows::Win32::UI::Accessibility::{
     SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EVENT_OBJECT_NAMECHANGE, EVENT_SYSTEM_FOREGROUND, GetForegroundWindow,
-    GetMessageW, GetWindowTextW, GetWindowThreadProcessId, PostThreadMessageW, TranslateMessage,
-    WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_QUIT, MSG,
+    DispatchMessageW, EVENT_OBJECT_NAMECHANGE, EVENT_SYSTEM_FOREGROUND, GetClassNameW,
+    GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId,
+    GWL_EXSTYLE, PostThreadMessageW, TranslateMessage, WINEVENT_OUTOFCONTEXT,
+    WINEVENT_SKIPOWNPROCESS, WM_QUIT, MSG,
 };
 
 use crate::hook::{HookNotifier, WinHookEvent};
@@ -42,6 +48,34 @@ pub fn event_kind(event: u32) -> &'static str {
 /// 全路径 → 可执行文件 basename(纯函数):`C:\a\b.exe` → `b.exe`;无分隔符原样返回。
 pub fn process_basename_from_path(full: &str) -> &str {
     full.rsplit(['\\', '/']).next().unwrap_or(full)
+}
+
+/// TSF 输入法 UI 窗口类名:现代输入法(搜狗/微软拼音等)的候选词窗、语言条统一走
+/// Text Services Framework,UI 线程窗口固定用此类名 —— 命中即视为 IME 窗口,零维护。
+pub const TSF_IME_CLASS: &str = "CiceroUIWndFrame";
+
+// GWL_EXSTYLE 相关位(手工常量,避免依赖 WINDOW_EX_STYLE 的类型包装):
+// - WS_EX_NOACTIVATE 0x08000000:窗口不抢键盘焦点(IME 悬浮窗特征);
+// - WS_EX_TOOLWINDOW 0x00000080:工具窗,不占任务栏条目;
+// - WS_EX_APPWINDOW 0x00040000:强制出现在任务栏/ALT+TAB(真实应用窗口通常带)。
+const WS_EX_NOACTIVATE: u32 = 0x0800_0000;
+const WS_EX_TOOLWINDOW: u32 = 0x0000_0080;
+const WS_EX_APPWINDOW: u32 = 0x0004_0000;
+
+/// 判定窗口是否应被忽略(IME 候选词窗 / 无任务栏的悬浮工具窗,纯函数)。
+///
+/// 两条规则(见模块注释):
+/// 1. 类名 == `CiceroUIWndFrame` → TSF 输入法 UI 窗口,一律丢弃(标题/样式不管);
+/// 2. `WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW` 且**不带** `WS_EX_APPWINDOW` 且标题为空
+///    → 不激活、不进任务栏/切换器、无标题的工具窗,IME 悬浮窗符合;真实应用极少同时满足。
+pub fn is_ime_tool_window(class_name: &str, ex_style: u32, title: &str) -> bool {
+    if class_name == TSF_IME_CLASS {
+        return true;
+    }
+    ex_style & WS_EX_NOACTIVATE != 0
+        && ex_style & WS_EX_TOOLWINDOW != 0
+        && ex_style & WS_EX_APPWINDOW == 0
+        && title.is_empty()
 }
 
 /// 去重状态机(纯函数):照 C++ `EmitEvent` 的 lastType/lastProc/lastTitle。同一
@@ -221,6 +255,11 @@ unsafe extern "system" fn win_event_proc(
     let process_name = pid_to_basename(window_pid(hwnd));
     let title = window_title(hwnd);
 
+    // IME/工具窗过滤(见 `is_ime_tool_window`):在去重之前丢弃,不污染去重状态。
+    if is_ime_tool_window(&window_class_name(hwnd), window_ex_style(hwnd), &title) {
+        return;
+    }
+
     let emit = DEDUP.with(|d| d.borrow_mut().should_emit(kind, &process_name, &title));
     if !emit {
         return;
@@ -295,6 +334,22 @@ fn window_title(hwnd: HWND) -> String {
     String::from_utf16_lossy(&buf[..n as usize])
 }
 
+/// GetClassNameW 类名:供 `is_ime_tool_window` 识别 TSF 输入法 UI 窗口。失败/空 → 空串。
+fn window_class_name(hwnd: HWND) -> String {
+    let mut buf = [0u16; 256];
+    let n = unsafe { GetClassNameW(hwnd, &mut buf) };
+    if n <= 0 {
+        return String::new();
+    }
+    String::from_utf16_lossy(&buf[..n as usize])
+}
+
+/// GetWindowLongPtrW(GWL_EXSTYLE) → u32(扩展样式位,供 `is_ime_tool_window` 用)。
+/// 失败返回 0(照标题的"失败 → 空"语义,不报错)。
+fn window_ex_style(hwnd: HWND) -> u32 {
+    unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,6 +368,33 @@ mod tests {
         assert_eq!(event_kind(EVENT_SYSTEM_FOREGROUND), "foreground");
         assert_eq!(event_kind(EVENT_OBJECT_NAMECHANGE), "namechange");
         assert_eq!(event_kind(99999), "namechange");
+    }
+
+    #[test]
+    fn tsf_ime_class_is_always_filtered() {
+        // CiceroUIWndFrame 命中即过滤,与标题/样式无关。
+        assert!(is_ime_tool_window(TSF_IME_CLASS, 0, ""));
+        assert!(is_ime_tool_window(TSF_IME_CLASS, 0, "候选词"));
+        assert!(is_ime_tool_window(TSF_IME_CLASS, WS_EX_APPWINDOW, ""));
+    }
+
+    #[test]
+    fn noactivate_toolwindow_without_title_is_filtered() {
+        let tool = WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+        assert!(is_ime_tool_window("Other", tool, ""));
+    }
+
+    #[test]
+    fn real_app_windows_are_not_filtered() {
+        let tool = WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+        // 带任务栏/切换器入口 → 不过滤。
+        assert!(!is_ime_tool_window("Other", tool | WS_EX_APPWINDOW, ""));
+        // 无 NOACTIVATE → 不过滤。
+        assert!(!is_ime_tool_window("Other", WS_EX_TOOLWINDOW, ""));
+        // 有可见标题 → 不过滤。
+        assert!(!is_ime_tool_window("Other", tool, "文档 - Notepad"));
+        // 完全无工具窗样式 → 不过滤。
+        assert!(!is_ime_tool_window("Other", 0, ""));
     }
 
     #[test]
