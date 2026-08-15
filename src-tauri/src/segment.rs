@@ -20,7 +20,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::hook::{HookNotifier, WinHookEvent};
-use crate::time::{day_bounds, split_at_midnight};
+use crate::settings;
+use crate::time::{day_bounds, parse_iso_to_ms, split_at_midnight};
 use crate::todos::now_iso;
 use crate::tracker::ConnAccess;
 
@@ -149,6 +150,54 @@ pub fn close_open(conn: &Connection, at: &str) -> i64 {
     .unwrap_or(0) as i64
 }
 
+/// 读当前开放段(`endAt IS NULL`)。模型保证至多一条;防御性取 `startAt` 最早的一条。
+pub fn get_open_segment(conn: &Connection) -> rusqlite::Result<Option<Segment>> {
+    let mut stmt =
+        conn.prepare("SELECT * FROM segments WHERE endAt IS NULL ORDER BY startAt ASC LIMIT 1")?;
+    let mut rows = stmt.query_map([], row_to_segment)?;
+    match rows.next() {
+        Some(r) => r.map(Some),
+        None => Ok(None),
+    }
+}
+
+/// 把当前开放段的 `processName`/`title` 改写为新窗口,保持 `startAt`/`kind`/`note`/
+/// `todoId` 不变。用于「最小片段时长合并」:短于防抖时间的片段不单独记录,并入下一个窗口。
+pub fn replace_open_process_title(
+    conn: &Connection,
+    process_name: &str,
+    title: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE segments SET processName = ?1, title = ?2 WHERE endAt IS NULL",
+        params![process_name, title],
+    )?;
+    Ok(())
+}
+
+/// 判断当前开放 activity 段在 `now` 时刻是否短于 `threshold_sec` 而应被合并。
+/// - `threshold_sec == 0`(未配置/无效)→ 不合并;
+/// - 开放段非 activity(如 idle)或 startAt/now 无法解析 → 不合并(保守,正常关旧开新)。
+pub fn should_merge_open(conn: &Connection, now: &str, threshold_sec: u64) -> bool {
+    if threshold_sec == 0 {
+        return false;
+    }
+    let seg = match get_open_segment(conn) {
+        Ok(Some(s)) => s,
+        _ => return false,
+    };
+    if seg.kind != SegmentKind::Activity {
+        return false;
+    }
+    match (parse_iso_to_ms(&seg.start_at), parse_iso_to_ms(now)) {
+        (Some(start_ms), Some(now_ms)) => {
+            let elapsed_ms = now_ms.saturating_sub(start_ms).max(0) as u64;
+            elapsed_ms < threshold_sec.saturating_mul(1000)
+        }
+        _ => false,
+    }
+}
+
 /// `listAllSegments()`:`SELECT * ORDER BY startAt ASC`。TS 镜像读 API,由测试覆盖;
 /// 生产 renderer 走按日查询(`segments_list`),故仅测试使用。
 #[allow(dead_code)]
@@ -274,18 +323,29 @@ pub fn start_tracking<N: HookNotifier, C: ConnAccess + 'static>(notifier: N, con
             return;
         }
         let written: Result<(), String> = conn.lock_conn(|c| {
-            let _ = close_open(c, &now_iso());
-            open_segment(
-                c,
-                &OpenSegmentInput {
-                    process_name: e.process_name.clone(),
-                    title: e.title.clone(),
-                    kind: None,
-                    todo_id: None,
-                    start_at: None,
-                },
-            )
-            .map_err(|err| err.to_string())?;
+            let now = now_iso();
+            let threshold = settings::get_with_default(c, settings::KEY_MIN_SEGMENT_SEC)
+                .parse::<u64>()
+                .ok()
+                .filter(|&n| n > 0)
+                .unwrap_or(0);
+            if should_merge_open(c, &now, threshold) {
+                replace_open_process_title(c, &e.process_name, &e.title)
+                    .map_err(|err| err.to_string())?;
+            } else {
+                let _ = close_open(c, &now);
+                open_segment(
+                    c,
+                    &OpenSegmentInput {
+                        process_name: e.process_name.clone(),
+                        title: e.title.clone(),
+                        kind: None,
+                        todo_id: None,
+                        start_at: None,
+                    },
+                )
+                .map_err(|err| err.to_string())?;
+            }
             Ok(())
         });
         match written {
@@ -354,6 +414,80 @@ mod tests {
         let at = "2026-08-03T10:30:00Z";
         assert_eq!(close_open(&conn, at), 1);
         assert_eq!(close_open(&conn, at), 0);
+    }
+
+    fn open_at(p: &str, t: &str, start: &str) -> OpenSegmentInput {
+        OpenSegmentInput {
+            process_name: p.into(),
+            title: t.into(),
+            kind: None,
+            todo_id: None,
+            start_at: Some(start.into()),
+        }
+    }
+
+    #[test]
+    fn get_open_segment_returns_none_then_some() {
+        let conn = make();
+        assert!(get_open_segment(&conn).unwrap().is_none());
+        open_segment(&conn, &open_at("a", "t", "2026-08-03T10:00:00Z")).unwrap();
+        let open = get_open_segment(&conn).unwrap().unwrap();
+        assert_eq!(open.process_name, "a");
+        assert!(open.end_at.is_none());
+    }
+
+    #[test]
+    fn replace_open_process_title_keeps_start_at_and_kind() {
+        let conn = make();
+        let s = open_segment(&conn, &open_at("a", "A", "2026-08-03T10:00:00Z")).unwrap();
+        replace_open_process_title(&conn, "b.exe", "B").unwrap();
+        let open = get_open_segment(&conn).unwrap().unwrap();
+        assert_eq!(open.id, s.id);
+        assert_eq!(open.start_at, "2026-08-03T10:00:00Z");
+        assert_eq!(open.process_name, "b.exe");
+        assert_eq!(open.title, "B");
+        assert_eq!(open.kind, SegmentKind::Activity);
+        assert!(open.end_at.is_none());
+    }
+
+    #[test]
+    fn should_merge_open_merges_short_activity_open() {
+        let conn = make();
+        open_segment(&conn, &open_at("a", "A", "2026-08-03T10:00:00Z")).unwrap();
+        assert!(should_merge_open(&conn, "2026-08-03T10:00:30Z", 60));
+    }
+
+    #[test]
+    fn should_merge_open_does_not_merge_at_or_beyond_threshold() {
+        let conn = make();
+        open_segment(&conn, &open_at("a", "A", "2026-08-03T10:00:00Z")).unwrap();
+        assert!(!should_merge_open(&conn, "2026-08-03T10:01:00Z", 60));
+        assert!(!should_merge_open(&conn, "2026-08-03T10:02:00Z", 60));
+    }
+
+    #[test]
+    fn should_merge_open_does_not_merge_idle_open() {
+        let conn = make();
+        open_segment(
+            &conn,
+            &OpenSegmentInput {
+                process_name: "[idle]".into(),
+                title: String::new(),
+                kind: Some(SegmentKind::Idle),
+                todo_id: None,
+                start_at: Some("2026-08-03T10:00:00Z".into()),
+            },
+        )
+        .unwrap();
+        assert!(!should_merge_open(&conn, "2026-08-03T10:00:30Z", 60));
+    }
+
+    #[test]
+    fn should_merge_open_false_when_no_open_or_zero_threshold() {
+        let conn = make();
+        assert!(!should_merge_open(&conn, "2026-08-03T10:00:30Z", 60));
+        open_segment(&conn, &open_at("a", "A", "2026-08-03T10:00:00Z")).unwrap();
+        assert!(!should_merge_open(&conn, "2026-08-03T10:00:30Z", 0));
     }
 
     #[test]
@@ -567,6 +701,8 @@ mod tests {
     #[test]
     fn start_tracking_opens_new_and_closes_previous_on_each_foreground() {
         let (conn, ca) = make_local();
+        // 关闭合并(阈值 0),验证原始「逐事件关旧开新」语义。
+        with_conn(&conn, |c| settings::set(c, settings::KEY_MIN_SEGMENT_SEC, "0").unwrap());
         let hook = FakeHook::new();
         let mut emit = hook.clone();
         let hook = start_tracking(hook, ca.clone());
@@ -586,6 +722,7 @@ mod tests {
     #[test]
     fn namechange_for_current_hwnd_updates_title_via_close_open() {
         let (conn, ca) = make_local();
+        with_conn(&conn, |c| settings::set(c, settings::KEY_MIN_SEGMENT_SEC, "0").unwrap());
         let hook = FakeHook::new();
         let mut emit = hook.clone();
         let _hook = start_tracking(hook, ca.clone());
@@ -615,6 +752,58 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].title, "X");
         assert!(rows[0].end_at.is_none());
+    }
+
+    #[test]
+    fn foreground_events_within_debounce_merge_into_one_segment() {
+        let (conn, ca) = make_local();
+        // 阈值设大,使紧邻的两次前台切换必然短于阈值 → 合并为一段。
+        with_conn(&conn, |c| settings::set(c, settings::KEY_MIN_SEGMENT_SEC, "3600").unwrap());
+        let hook = FakeHook::new();
+        let mut emit = hook.clone();
+        let _hook = start_tracking(hook, ca.clone());
+
+        emit.emit(foreground(1, "a.exe", "A"));
+        emit.emit(foreground(2, "b.exe", "B"));
+
+        let rows = with_conn(&conn, |c| list_all(c).unwrap());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].process_name, "b.exe");
+        assert_eq!(rows[0].title, "B");
+        assert!(rows[0].end_at.is_none());
+    }
+
+    #[test]
+    fn foreground_does_not_merge_an_open_idle_segment() {
+        let (conn, ca) = make_local();
+        with_conn(&conn, |c| {
+            settings::set(c, settings::KEY_MIN_SEGMENT_SEC, "3600").unwrap();
+            // 预开一个 idle 段(模拟 tracker 进入空闲),idle 段绝不应被吞并。
+            open_segment(
+                c,
+                &OpenSegmentInput {
+                    process_name: "[idle]".into(),
+                    title: String::new(),
+                    kind: Some(SegmentKind::Idle),
+                    todo_id: None,
+                    start_at: Some("2026-08-03T10:00:00Z".into()),
+                },
+            )
+            .unwrap();
+        });
+        let hook = FakeHook::new();
+        let mut emit = hook.clone();
+        let _hook = start_tracking(hook, ca.clone());
+
+        emit.emit(foreground(2, "b.exe", "B"));
+
+        let rows = with_conn(&conn, |c| list_all(c).unwrap());
+        assert_eq!(rows.len(), 2);
+        let idle = rows.iter().find(|r| r.kind == SegmentKind::Idle).unwrap();
+        assert!(idle.end_at.is_some());
+        let act = rows.iter().find(|r| r.kind == SegmentKind::Activity).unwrap();
+        assert_eq!(act.process_name, "b.exe");
+        assert!(act.end_at.is_none());
     }
 
     #[test]

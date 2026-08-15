@@ -33,6 +33,7 @@ export interface Settings {
   exportDir: string
   draft: string
   idleThresholdSec: string
+  minSegmentSec: string
   shortcutError?: string | null
 }
 

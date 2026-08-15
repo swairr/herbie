@@ -12,6 +12,7 @@ use rusqlite::{params, Connection};
 /// 字符串字面量读写,此处只保留 Rust 侧用到的键)。
 pub const KEY_SHORTCUT: &str = "shortcut";
 pub const KEY_IDLE_THRESHOLD_SEC: &str = "idleThresholdSec";
+pub const KEY_MIN_SEGMENT_SEC: &str = "minSegmentSec";
 pub const KEY_SHORTCUT_ERROR: &str = "shortcutError";
 
 /// 默认值表(对齐 TS `DEFAULTS`。TS 中 `shortcutError: null`,`getDefault` 把 null/undefined
@@ -22,6 +23,7 @@ fn default_for(key: &str) -> String {
         "exportDir" => String::new(),
         "draft" => String::new(),
         "idleThresholdSec" => "300".to_string(),
+        "minSegmentSec" => "60".to_string(),
         "shortcutError" => String::new(),
         _ => String::new(),
     }

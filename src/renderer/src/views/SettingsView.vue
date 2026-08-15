@@ -4,6 +4,7 @@ import { onMounted, ref } from 'vue'
 const shortcut = ref('')
 const exportDir = ref('')
 const idleThresholdSec = ref('')
+const minSegmentSec = ref('')
 const shortcutError = ref<string | null>(null)
 const saved = ref(false)
 
@@ -12,6 +13,7 @@ async function load(): Promise<void> {
   shortcut.value = (all.shortcut as string) || 'Ctrl+Shift+Space'
   exportDir.value = (all.exportDir as string) || ''
   idleThresholdSec.value = (all.idleThresholdSec as string) || '300'
+  minSegmentSec.value = (all.minSegmentSec as string) || '60'
   shortcutError.value = (all.shortcutError as string) || null
 }
 
@@ -19,6 +21,7 @@ async function saveAll(): Promise<void> {
   await window.api.settings.set('shortcut', shortcut.value.trim())
   await window.api.settings.set('exportDir', exportDir.value.trim())
   await window.api.settings.set('idleThresholdSec', idleThresholdSec.value.trim())
+  await window.api.settings.set('minSegmentSec', minSegmentSec.value.trim())
   saved.value = true
   setTimeout(() => (saved.value = false), 1500)
   await load()
@@ -63,6 +66,12 @@ onMounted(load)
         <input v-model="idleThresholdSec" type="number" min="1" placeholder="300" />
       </label>
 
+      <label class="field">
+        <span>防抖时间（秒）</span>
+        <input v-model="minSegmentSec" type="number" min="1" placeholder="60" />
+        <em class="hint">短于该时长的片段会并入下一个窗口，避免时间段过于零散</em>
+      </label>
+
       <div class="actions">
         <button class="primary" @click="saveAll">保存</button>
         <span v-if="saved" class="saved">已保存</span>
@@ -99,6 +108,11 @@ onMounted(load)
 }
 .field > span {
   font-size: 12px;
+  color: var(--muted);
+}
+.field .hint {
+  font-size: 11px;
+  font-style: normal;
   color: var(--muted);
 }
 .dir-row {
