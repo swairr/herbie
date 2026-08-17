@@ -1,0 +1,48 @@
+name: 'Build Windows portable'
+description: 'Shared Windows build steps: setup pnpm/Node, install deps, cargo cache, (optional) cargo tests, tauri build, compress portable zip'
+inputs:
+  zip-name:
+    description: 'File name of the resulting zip'
+    required: true
+  run-tests:
+    description: 'Run cargo tests before building'
+    type: boolean
+    default: false
+
+runs:
+  using: composite
+  steps:
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v6
+      with:
+        version: 9
+        run_install: false
+
+    - name: Setup Node
+      uses: actions/setup-node@v7
+      with:
+        node-version: '22'
+        cache: 'pnpm'
+
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+      shell: bash
+
+    - name: Cache cargo (registry + target)
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: src-tauri
+        cache-on-failure: true
+
+    - name: Rust tests
+      if: ${{ inputs.run-tests }}
+      run: cargo test --manifest-path src-tauri/Cargo.toml
+      shell: bash
+
+    - name: Build (no bundle)
+      run: pnpm tauri build --no-bundle
+      shell: bash
+
+    - name: Compress portable exe
+      run: Compress-Archive -Path src-tauri\target\release\herbie.exe -DestinationPath ${{ inputs.zip-name }}
+      shell: pwsh

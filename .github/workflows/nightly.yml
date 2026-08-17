@@ -1,0 +1,93 @@
+name: nightly
+
+on:
+  schedule:
+    # UTC 19:00 = 北京时间 03:00(GitHub 的 cron 可能延迟几分钟)
+    - cron: '0 19 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Rebuild even if there are no new commits'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-release
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check for new commits since last nightly
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force origin refs/tags/nightly:refs/tags/nightly || true
+          if git rev-parse --verify --quiet 'refs/tags/nightly^{commit}' >/dev/null; then
+            prev=$(git rev-parse 'refs/tags/nightly^{commit}')
+          else
+            prev=''
+          fi
+          head=$(git rev-parse HEAD)
+          echo "prev=$prev" >> "$GITHUB_OUTPUT"
+          force='${{ inputs.force == true }}'
+          if [ -n "$prev" ] && [ "$prev" = "$head" ] && [ "$force" != 'true' ]; then
+            echo 'No new commits since last nightly, skip.'
+            echo 'skip=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'skip=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build Windows portable
+        if: steps.check.outputs.skip == 'false'
+        uses: ./.github/actions/build-windows
+        with:
+          zip-name: Herbie-nightly-win-x64.zip
+
+      - name: Generate release notes
+        if: steps.check.outputs.skip == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          prev='${{ steps.check.outputs.prev }}'
+          {
+            echo "Nightly built on $(TZ=Asia/Shanghai date +%Y-%m-%d) (UTC+8)"
+            echo
+            echo "- commit: ${GITHUB_SHA}"
+            if [ -n "$prev" ]; then
+              echo
+              echo '### Changes since last nightly'
+              echo
+              git log --oneline "${prev}..HEAD"
+            fi
+          } > release_body.md
+          cat release_body.md
+
+      - name: Move nightly tag
+        if: steps.check.outputs.skip == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag -f nightly "$GITHUB_SHA"
+          git push origin refs/tags/nightly --force
+
+      - name: Publish release
+        if: steps.check.outputs.skip == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Herbie Nightly
+          prerelease: true
+          make_latest: 'false'
+          body_path: release_body.md
+          files: Herbie-nightly-win-x64.zip

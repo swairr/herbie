@@ -43,35 +43,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+      - name: Build Windows portable (with tests)
+        uses: ./.github/actions/build-windows
         with:
-          version: 9
-          run_install: false
-
-      - name: Setup Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Cache cargo (registry + target)
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-          cache-on-failure: true
-
-      - name: Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
-
-      - name: Build (no bundle)
-        run: pnpm tauri build --no-bundle
-
-      - name: Compress portable exe
-        run: Compress-Archive -Path src-tauri\target\release\herbie.exe -DestinationPath Herbie-win-x64.zip
+          zip-name: Herbie-win-x64.zip
+          run-tests: true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
