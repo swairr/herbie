@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import type { LabelCount, Todo, TodoFilter } from '@shared/types'
 import { formatLocalShort } from '@shared/time'
 import { parseLabels } from '@shared/labels'
 import { groupItems } from '../utils'
 import DetailText from '../components/DetailText.vue'
+import { useAddTodo } from '../composables/useAddTodo'
 
 const all = ref<Todo[]>([])
 const labels = ref<LabelCount[]>([])
@@ -15,6 +16,47 @@ const editing = ref<Record<string, { title: string; detail: string }>>({})
 const exporting = ref(false)
 const lastExport = ref<string | null>(null)
 const offWork = ref(false)
+
+const newTitle = ref('')
+const newDetail = ref('')
+const detailOpen = ref(false)
+const addTitleInput = ref<HTMLInputElement | null>(null)
+const addDetailInput = ref<HTMLTextAreaElement | null>(null)
+const { adding, shaking, submit: submitTodo } = useAddTodo(newTitle, newDetail)
+
+function newLabels(): string[] {
+  return parseLabels(newDetail.value)
+}
+
+function onAddTitleKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    void submitAdd()
+  } else if (e.key === 'Tab') {
+    e.preventDefault()
+    detailOpen.value = true
+    void nextTick(() => addDetailInput.value?.focus())
+  }
+}
+
+function onAddDetailKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault()
+    void submitAdd()
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    detailOpen.value = false
+    addTitleInput.value?.focus()
+  }
+}
+
+async function submitAdd(): Promise<void> {
+  const created = await submitTodo()
+  if (!created) return
+  detailOpen.value = false
+  addTitleInput.value?.focus()
+  await refresh()
+}
 
 const filter = computed<TodoFilter>(() => ({
   labels: selected.value.size ? Array.from(selected.value) : undefined
@@ -230,6 +272,33 @@ onMounted(async () => {
 
     <div v-if="lastExport" class="toast">{{ lastExport }}</div>
 
+    <section class="add" :class="{ shake: shaking }">
+      <input
+        ref="addTitleInput"
+        v-model="newTitle"
+        spellcheck="false"
+        placeholder="添加待办…"
+        @keydown="onAddTitleKeydown"
+      />
+      <textarea
+        v-if="detailOpen"
+        ref="addDetailInput"
+        v-model="newDetail"
+        spellcheck="false"
+        rows="4"
+        placeholder="详情，#标签 自动识别"
+        @keydown="onAddDetailKeydown"
+      ></textarea>
+      <div v-if="detailOpen" class="edit-actions">
+        <span v-if="newLabels().length" class="hint">将解析标签：{{ newLabels().join(', ') }}</span>
+        <div>
+          <button class="primary" :disabled="adding" @click="submitAdd">
+            {{ adding ? '添加中…' : '添加' }}
+          </button>
+        </div>
+      </div>
+    </section>
+
     <section v-if="labels.length" class="labelbar">
       <button
         v-for="l in labels"
@@ -344,6 +413,31 @@ onMounted(async () => {
   background: var(--accent-soft);
   border-radius: 6px;
   font-size: 12px;
+}
+.add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+.add.shake {
+  animation: shake 0.4s;
+}
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-6px);
+  }
+  75% {
+    transform: translateX(6px);
+  }
 }
 .labelbar {
   display: flex;

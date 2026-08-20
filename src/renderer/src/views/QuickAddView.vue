@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { parseLabels } from '@shared/labels'
+import { useAddTodo } from '../composables/useAddTodo'
 
 const title = ref('')
 const titleInput = ref<HTMLInputElement | null>(null)
 const detail = ref('')
 const placeholder = ref('')
 const clipboardFilled = ref(false)
-const shaking = ref(false)
 const confirmMsg = ref('')
 const dirty = ref(false)
+const { shaking, submit: submitTodo } = useAddTodo(title, detail)
 
 function markDirty(): void {
   dirty.value = true
@@ -83,14 +84,8 @@ function onTab(e: KeyboardEvent): void {
 }
 
 async function onSubmit(): Promise<void> {
-  const t = title.value.trim()
-  if (!t) {
-    shake()
-    return
-  }
-  await window.api.todos.create({ title: t, detail: detail.value })
-  title.value = ''
-  detail.value = ''
+  const created = await submitTodo()
+  if (!created) return
   dirty.value = false
   await window.api.settings.set('draft', '')
   confirmMsg.value = '已添加'
@@ -98,11 +93,6 @@ async function onSubmit(): Promise<void> {
     confirmMsg.value = ''
     void window.api.window.quickAddHide()
   }, 600)
-}
-
-function shake(): void {
-  shaking.value = true
-  setTimeout(() => (shaking.value = false), 400)
 }
 
 async function onEsc(): Promise<void> {
