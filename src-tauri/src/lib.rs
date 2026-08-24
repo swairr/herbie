@@ -110,7 +110,12 @@ pub fn stop_tracking_system() {
 }
 
 #[tauri::command]
-fn settings_get(key: String) -> Result<Option<String>, String> {
+fn settings_get(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
+    // autostart 键不落 DB:注册表(HKCU Run)为唯一事实源,实时读插件状态。
+    if key == settings::KEY_AUTOSTART {
+        let on = shell::autostart_enabled(&app);
+        return Ok(Some(if on { "true" } else { "false" }.to_string()));
+    }
     let g = db::get();
     let conn = g.as_ref().ok_or("DB not initialized")?;
     Ok(settings::get(conn, &key))
@@ -118,6 +123,11 @@ fn settings_get(key: String) -> Result<Option<String>, String> {
 
 #[tauri::command]
 fn settings_set(app: tauri::AppHandle, key: String, value: String) -> Result<(), String> {
+    // autostart 键语义分叉:不写 DB,直接启停系统自启动(注册表为唯一事实源,
+    // 用户可经任务管理器/注册表改状态,入 DB 会形成双源漂移);失败原样返回供 UI 回滚。
+    if key == settings::KEY_AUTOSTART {
+        return shell::set_autostart(&app, value == "true");
+    }
     {
         let g = db::get();
         let conn = g.as_ref().ok_or("DB not initialized")?;
@@ -135,10 +145,16 @@ fn settings_set(app: tauri::AppHandle, key: String, value: String) -> Result<(),
 }
 
 #[tauri::command]
-fn settings_get_all() -> Result<Vec<(String, String)>, String> {
+fn settings_get_all(app: tauri::AppHandle) -> Result<Vec<(String, String)>, String> {
     let g = db::get();
     let conn = g.as_ref().ok_or("DB not initialized")?;
-    Ok(settings::get_all(conn))
+    let mut out = settings::get_all(conn);
+    // 追加 autostart 实际状态;读取失败按 false(自启动开启失败仅影响 UI 勾选,不得让整表读取失败)。
+    out.push((
+        settings::KEY_AUTOSTART.to_string(),
+        if shell::autostart_enabled(&app) { "true" } else { "false" }.to_string(),
+    ));
+    Ok(out)
 }
 
 #[tauri::command]
@@ -326,6 +342,18 @@ pub fn run() {
     TRACKER.set(Arc::new(Tracker::new())).ok();
 
     let app = tauri::Builder::default()
+        // single-instance 必须最先注册(Tauri 文档要求,先于其它可能建窗/跑代码的插件)。
+        // 第二实例:仅当其 argv 未含 --hidden 时唤起已有实例主窗口(自启动的第二实例静默退出)。
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if !shell::start_hidden_from_args(argv.into_iter()) {
+                shell::show_main_window(app);
+            }
+        }))
+        // 自启动写入 HKCU Run 时附加 --hidden,使开机实例不显示主窗口(仅托盘 + 后台追踪)。
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent, // Windows-only 应用,参数仅占位
+            Some(vec!["--hidden"]),
+        ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -357,6 +385,11 @@ pub fn run() {
             // 切片6 外壳:主窗口托盘驻留 + Quick Add 窗口 + 托盘 + 全局快捷键。
             let handle = app.handle();
             shell::setup_main_window(handle);
+            // 无 --hidden 参数的正常启动显示主窗口(须在 close 拦截挂上之后 show,
+            // 避免极速关窗绕过托盘驻留);自启动(--hidden)保持隐藏仅托盘。
+            if !shell::start_hidden_from_args(std::env::args()) {
+                shell::show_main_window(handle);
+            }
             shell::create_quick_add_window(handle);
             let _ = shell::create_tray(handle);
             shell::register_shortcut(handle);

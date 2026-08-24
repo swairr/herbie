@@ -6,6 +6,8 @@ const exportDir = ref('')
 const idleThresholdSec = ref('')
 const minSegmentSec = ref('')
 const shortcutError = ref<string | null>(null)
+const autostart = ref(false)
+const autostartError = ref<string | null>(null)
 const saved = ref(false)
 
 async function load(): Promise<void> {
@@ -15,6 +17,17 @@ async function load(): Promise<void> {
   idleThresholdSec.value = (all.idleThresholdSec as string) || '300'
   minSegmentSec.value = (all.minSegmentSec as string) || '60'
   shortcutError.value = (all.shortcutError as string) || null
+  autostart.value = all.autostart === 'true'
+}
+
+async function onToggleAutostart(): Promise<void> {
+  try {
+    await window.api.settings.set('autostart', autostart.value ? 'true' : 'false')
+    autostartError.value = null
+  } catch (e) {
+    autostart.value = !autostart.value
+    autostartError.value = String(e)
+  }
 }
 
 async function saveAll(): Promise<void> {
@@ -72,6 +85,15 @@ onMounted(load)
         <em class="hint">短于该时长的片段会并入下一个窗口，避免时间段过于零散</em>
       </label>
 
+      <label class="field">
+        <div class="check-row">
+          <input type="checkbox" v-model="autostart" @change="onToggleAutostart" />
+          <span>开机自动启动</span>
+        </div>
+        <em class="hint">开启后开机时自动启动并最小化到托盘</em>
+      </label>
+      <p v-if="autostartError" class="error">{{ autostartError }}</p>
+
       <div class="actions">
         <button class="primary" @click="saveAll">保存</button>
         <span v-if="saved" class="saved">已保存</span>
@@ -121,6 +143,18 @@ onMounted(load)
 }
 .dir-row input {
   flex: 1;
+}
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.check-row input {
+  width: auto;
+}
+.check-row span {
+  font-size: 12px;
+  color: var(--muted);
 }
 .actions {
   display: flex;

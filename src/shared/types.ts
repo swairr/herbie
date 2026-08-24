@@ -35,6 +35,7 @@ export interface Settings {
   idleThresholdSec: string
   minSegmentSec: string
   shortcutError?: string | null
+  autostart: string
 }
 
 export type SettingsKey = keyof Settings

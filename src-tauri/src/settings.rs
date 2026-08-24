@@ -14,6 +14,8 @@ pub const KEY_SHORTCUT: &str = "shortcut";
 pub const KEY_IDLE_THRESHOLD_SEC: &str = "idleThresholdSec";
 pub const KEY_MIN_SEGMENT_SEC: &str = "minSegmentSec";
 pub const KEY_SHORTCUT_ERROR: &str = "shortcutError";
+/// 自启动键:不落 DB 表(注册表 HKCU Run 为唯一事实源),入库特判直读插件状态。
+pub const KEY_AUTOSTART: &str = "autostart";
 
 /// 默认值表(对齐 TS `DEFAULTS`。TS 中 `shortcutError: null`,`getDefault` 把 null/undefined
 /// 归一为空串;此处直接给空串)。

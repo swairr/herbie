@@ -90,6 +90,32 @@ pub fn is_external_url_allowed(url: &str) -> bool {
     matches!(scheme, "http" | "https" | "mailto")
 }
 
+/// 判断启动参数是否要求隐藏主窗口(`--hidden`,自启动场景)。
+/// 同时被两条路径复用:正常启动(`std::env::args()`)与单实例回调(argv 均含完整命令行,
+/// 首元素为程序路径);任一参数精确等于 `--hidden` 即判定隐藏。
+pub fn start_hidden_from_args(mut args: impl Iterator<Item = String>) -> bool {
+    args.any(|a| a == "--hidden")
+}
+
+/// 读取自启动状态(注册表为唯一事实源,不落 DB)。读取失败一律按关闭处理,
+/// 供 `settings_get`/`settings_get_all` 特判,不阻断整表读取。
+pub fn autostart_enabled(app: &AppHandle) -> bool {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+/// 设置自启动(enable/disable,直写 HKCU Run)。错误转字符串返回给命令层,
+/// renderer 据此内联报错并回滚 checkbox。
+pub fn set_autostart(app: &AppHandle, on: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let manager = app.autolaunch();
+    if on {
+        manager.enable().map_err(|e| e.to_string())
+    } else {
+        manager.disable().map_err(|e| e.to_string())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 主窗口:托盘驻留
 // ---------------------------------------------------------------------------
@@ -347,5 +373,28 @@ mod tests {
         assert!(!is_external_url_allowed("//relative"));
         assert!(!is_external_url_allowed(""));
         assert!(!is_external_url_allowed("1http://x"));
+    }
+
+    #[test]
+    fn hidden_arg_detection_empty_and_plain() {
+        assert!(!start_hidden_from_args(std::iter::empty()));
+        assert!(!start_hidden_from_args(vec!["herbie.exe".to_string()].into_iter()));
+        assert!(!start_hidden_from_args(
+            vec!["herbie.exe".to_string(), "--flag".to_string()].into_iter()
+        ));
+    }
+
+    #[test]
+    fn hidden_arg_detection_matches_custom_arg() {
+        assert!(start_hidden_from_args(vec!["--hidden".to_string()].into_iter()));
+        assert!(start_hidden_from_args(
+            vec!["herbie.exe".to_string(), "--hidden".to_string()].into_iter()
+        ));
+    }
+
+    #[test]
+    fn hidden_arg_detection_exact_match_only() {
+        assert!(!start_hidden_from_args(vec!["--hidden-extra".to_string()].into_iter()));
+        assert!(!start_hidden_from_args(vec!["hidden".to_string()].into_iter()));
     }
 }
