@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { captureAccelerator } from '../utils'
 
 const shortcut = ref('')
 const mainShortcut = ref('')
@@ -11,6 +12,7 @@ const mainShortcutError = ref<string | null>(null)
 const autostart = ref(false)
 const autostartError = ref<string | null>(null)
 const saved = ref(false)
+const capturing = ref<'shortcut' | 'mainShortcut' | null>(null)
 
 async function load(): Promise<void> {
   const all = await window.api.settings.getAll()
@@ -54,7 +56,38 @@ function back(): void {
   location.hash = '#/main'
 }
 
-onMounted(load)
+function startCapture(target: 'shortcut' | 'mainShortcut'): void {
+  capturing.value = target
+}
+
+function endCapture(): void {
+  capturing.value = null
+}
+
+function onCaptureKeydown(e: KeyboardEvent): void {
+  if (!capturing.value) return
+  e.preventDefault()
+  e.stopPropagation()
+  const res = captureAccelerator(e)
+  if (res.status === 'cancel') {
+    endCapture()
+    return
+  }
+  if (res.status === 'captured') {
+    if (capturing.value === 'shortcut') shortcut.value = res.accelerator
+    else mainShortcut.value = res.accelerator
+    endCapture()
+  }
+}
+
+onMounted(() => {
+  load()
+  window.addEventListener('keydown', onCaptureKeydown, true)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onCaptureKeydown, true)
+})
 </script>
 
 <template>
@@ -67,14 +100,30 @@ onMounted(load)
     <section class="form">
       <label class="field">
         <span>快捷键</span>
-        <input v-model="shortcut" spellcheck="false" placeholder="Ctrl+Shift+Space" />
-        <em class="hint">唤起快速添加小窗口</em>
+        <button
+          type="button"
+          class="capture"
+          :class="{ capturing: capturing === 'shortcut' }"
+          :disabled="capturing !== null && capturing !== 'shortcut'"
+          @click="startCapture('shortcut')"
+        >
+          {{ capturing === 'shortcut' ? '请按下组合键…（Esc 取消）' : shortcut || '未设置' }}
+        </button>
+        <em class="hint">点击后按下组合键自动录入，唤起快速添加小窗口</em>
       </label>
       <p v-if="shortcutError" class="error">{{ shortcutError }}</p>
 
       <label class="field">
         <span>唤醒主窗口快捷键</span>
-        <input v-model="mainShortcut" spellcheck="false" placeholder="Ctrl+Shift+M" />
+        <button
+          type="button"
+          class="capture"
+          :class="{ capturing: capturing === 'mainShortcut' }"
+          :disabled="capturing !== null && capturing !== 'mainShortcut'"
+          @click="startCapture('mainShortcut')"
+        >
+          {{ capturing === 'mainShortcut' ? '请按下组合键…（Esc 取消）' : mainShortcut || '未设置' }}
+        </button>
         <em class="hint">主窗口隐藏到托盘后，用该快捷键重新唤出</em>
       </label>
       <p v-if="mainShortcutError" class="error">{{ mainShortcutError }}</p>
@@ -149,6 +198,33 @@ onMounted(load)
   font-size: 11px;
   font-style: normal;
   color: var(--muted);
+}
+.capture {
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  width: 100%;
+  cursor: pointer;
+}
+.capture:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+.capture.capturing {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.capture:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.capture:disabled:hover {
+  border-color: var(--border);
 }
 .dir-row {
   display: flex;
