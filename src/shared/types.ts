@@ -107,6 +107,7 @@ export interface Api {
     softDelete: (id: string) => Promise<void>
     labels: () => Promise<LabelCount[]>
     move: (id: string, beforeId: string | null) => Promise<Todo>
+    onChanged: (cb: (todo: Todo) => void) => () => void
   }
   settings: {
     get: (key: SettingsKey) => Promise<string | null>

@@ -7,7 +7,7 @@
 //   segments_list / segments_update / journal_* / tracker_get_off_work / tracker_set_off_work
 //   export_default_dir / export_pull_day / export_write_file(切片5 已注册)
 //   shell_open_external / clipboard_read_text / dialog_pick_directory / window_quick_add_hide
-//   事件:shortcut://error  quickadd://show | hide | blur
+//   事件:shortcut://error  quickadd://show | hide | blur  todos://changed
 //
 // 切片5:export/time/journal 三个导出方法改为全 TS 实现 —— 拉数据(invoke)→ 调 shared
 // markdown 纯函数生成 → 写文件(invoke)→ 返回 ExportResult。Rust 不再需要 export_export_markdown
@@ -72,7 +72,8 @@ export function createTauriApi(): Api {
       toggle: (id, done) => invoke<Todo>('todos_toggle', { id, done }),
       softDelete: (id) => invoke<void>('todos_soft_delete', { id }),
       labels: () => invoke<LabelCount[]>('todos_labels'),
-      move: (id, beforeId) => invoke<Todo>('todos_move', { id, beforeId })
+      move: (id, beforeId) => invoke<Todo>('todos_move', { id, beforeId }),
+      onChanged: (cb) => attach('todos://changed', (p) => cb(p as Todo))
     },
     settings: {
       get: (key) => invoke<string | null>('settings_get', { key }),

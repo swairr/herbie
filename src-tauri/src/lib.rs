@@ -25,6 +25,7 @@ use segment::{Segment, SegmentPatch};
 use journal::{JournalEntry, JournalInput, JournalPatch};
 use export::ExportDayData;
 use todos::{LabelCount, Todo, TodoFilter, TodoInput, TodoPatch};
+use tauri::Emitter;
 use tracker::{GatedNotifier, GlobalConn, OffWorkState, ProdDeps, Tracker};
 #[cfg(windows)]
 use win::foreground::ForegroundHook;
@@ -165,10 +166,13 @@ fn todos_list(filter: Option<TodoFilter>) -> Result<Vec<Todo>, String> {
 }
 
 #[tauri::command]
-fn todos_create(input: TodoInput) -> Result<Todo, String> {
+fn todos_create(app: tauri::AppHandle, input: TodoInput) -> Result<Todo, String> {
     let mut g = db::get();
     let conn = g.as_mut().ok_or("DB not initialized")?;
-    todos::create_todo(conn, &input).map_err(|e| e.to_string())
+    let todo = todos::create_todo(conn, &input).map_err(|e| e.to_string())?;
+    // Quick Add 子窗口创建后广播,主窗口据此刷新待办列表(事件契约见 tauri.ts 注释)。
+    let _ = app.emit("todos://changed", &todo);
+    Ok(todo)
 }
 
 #[tauri::command]

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { LabelCount, Todo, TodoFilter } from '@shared/types'
 import { formatLocalShort } from '@shared/time'
 import { parseLabels } from '@shared/labels'
@@ -23,6 +23,7 @@ const detailOpen = ref(false)
 const addTitleInput = ref<HTMLInputElement | null>(null)
 const addDetailInput = ref<HTMLTextAreaElement | null>(null)
 const { adding, shaking, submit: submitTodo } = useAddTodo(newTitle, newDetail)
+let detachTodosChanged: () => void = () => {}
 
 function newLabels(): string[] {
   return parseLabels(newDetail.value)
@@ -247,6 +248,11 @@ function goSettings(): void {
 onMounted(async () => {
   await refresh()
   await loadOffWork()
+  detachTodosChanged = window.api.todos.onChanged(() => void refresh())
+})
+
+onBeforeUnmount(() => {
+  detachTodosChanged()
 })
 </script>
 
