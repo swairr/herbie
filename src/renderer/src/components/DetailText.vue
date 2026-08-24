@@ -17,7 +17,7 @@ async function openLink(url: string): Promise<void> {
   <div class="detail">
     <p class="detail-text">
       <template v-for="(seg, i) in segments" :key="i">
-        <a v-if="seg.type === 'url'" href="#" @click.prevent="openLink(seg.value)">{{ seg.value }}</a>
+        <a v-if="seg.type === 'url'" href="#" @click.prevent.stop="openLink(seg.value)">{{ seg.value }}</a>
         <span v-else>{{ seg.value }}</span>
       </template>
     </p>

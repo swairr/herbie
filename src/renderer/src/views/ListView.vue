@@ -329,15 +329,17 @@ onBeforeUnmount(() => {
           'drop-after': isHint(t.id, 'after')
         }"
         :data-todo-id="t.id"
+        @click="expand(t)"
         @dragover.prevent="onDragOverItem(t, $event)"
         @drop.stop="onDrop(t, $event)"
       >
-        <div class="row" @click="expand(t)">
+        <div class="row">
           <span
             v-if="canDrag && !expanded.has(t.id)"
             class="drag-handle"
             :draggable="true"
             title="拖动排序"
+            @click.stop
             @dragstart="onDragStart(t, $event)"
             @dragend="onDragEnd"
           >⠿</span>
@@ -478,6 +480,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 10px;
+  cursor: pointer;
 }
 .item.expanded {
   border-color: var(--accent);
@@ -569,6 +572,9 @@ onBeforeUnmount(() => {
   color: var(--muted);
 }
 .done .row {
+  cursor: default;
+}
+.done {
   cursor: default;
 }
 .offwork {
