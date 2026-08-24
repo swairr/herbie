@@ -11,9 +11,11 @@ use rusqlite::{params, Connection};
 /// 键名常量(对齐 TS `SettingsKey = keyof Settings`;renderer 侧 exportDir/draft 以
 /// 字符串字面量读写,此处只保留 Rust 侧用到的键)。
 pub const KEY_SHORTCUT: &str = "shortcut";
+pub const KEY_MAIN_SHORTCUT: &str = "mainShortcut";
 pub const KEY_IDLE_THRESHOLD_SEC: &str = "idleThresholdSec";
 pub const KEY_MIN_SEGMENT_SEC: &str = "minSegmentSec";
 pub const KEY_SHORTCUT_ERROR: &str = "shortcutError";
+pub const KEY_MAIN_SHORTCUT_ERROR: &str = "mainShortcutError";
 /// 自启动键:不落 DB 表(注册表 HKCU Run 为唯一事实源),入库特判直读插件状态。
 pub const KEY_AUTOSTART: &str = "autostart";
 
@@ -22,11 +24,13 @@ pub const KEY_AUTOSTART: &str = "autostart";
 fn default_for(key: &str) -> String {
     match key {
         "shortcut" => "Ctrl+Shift+Space".to_string(),
+        "mainShortcut" => "Ctrl+Shift+M".to_string(),
         "exportDir" => String::new(),
         "draft" => String::new(),
         "idleThresholdSec" => "300".to_string(),
         "minSegmentSec" => "60".to_string(),
         "shortcutError" => String::new(),
+        "mainShortcutError" => String::new(),
         _ => String::new(),
     }
 }
@@ -105,6 +109,7 @@ mod tests {
     fn returns_default_when_unset_via_getting_with_default() {
         let conn = make();
         assert_eq!(get_with_default(&conn, "shortcut"), "Ctrl+Shift+Space");
+        assert_eq!(get_with_default(&conn, "mainShortcut"), "Ctrl+Shift+M");
     }
 
     #[test]

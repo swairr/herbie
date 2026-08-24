@@ -30,11 +30,13 @@ export interface TodoPatch {
 
 export interface Settings {
   shortcut: string
+  mainShortcut: string
   exportDir: string
   draft: string
   idleThresholdSec: string
   minSegmentSec: string
   shortcutError?: string | null
+  mainShortcutError?: string | null
   autostart: string
 }
 
@@ -148,6 +150,7 @@ export interface Api {
     quickAddHide: () => Promise<void>
   }
   onShortcutError: (cb: (msg: string) => void) => () => void
+  onMainShortcutError: (cb: (msg: string) => void) => () => void
   quickadd: {
     onShow: (cb: () => void) => () => void
     onHide: (cb: () => void) => () => void

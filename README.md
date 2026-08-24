@@ -8,6 +8,7 @@ H.E.R.B.I.E 是用于待办跟踪、任务安排、时间记录、日志手账�
 - 数据存于本地 SQLite（`%APPDATA%/herbie/herbie.db`），WAL + 外键，SQL 迁移体系管理 schema
 - 驻留托盘：关闭窗口后停留在托盘，仅通过托盘菜单退出
 - 全局快捷键唤醒 Quick Add 小窗口（默认 `Ctrl+Shift+Space`，可配置）
+- 全局快捷键唤醒主窗口（默认 `Ctrl+Shift+M`，可配置）
 - 设置页：导出目录、快捷键、空闲阈值、片段防抖时长等可配置
 - CI：Rust 单测 + 跨语言夹具对拍 + 绿色版 exe 发布流程
 

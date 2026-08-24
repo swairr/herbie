@@ -2,10 +2,12 @@
 import { onMounted, ref } from 'vue'
 
 const shortcut = ref('')
+const mainShortcut = ref('')
 const exportDir = ref('')
 const idleThresholdSec = ref('')
 const minSegmentSec = ref('')
 const shortcutError = ref<string | null>(null)
+const mainShortcutError = ref<string | null>(null)
 const autostart = ref(false)
 const autostartError = ref<string | null>(null)
 const saved = ref(false)
@@ -13,10 +15,12 @@ const saved = ref(false)
 async function load(): Promise<void> {
   const all = await window.api.settings.getAll()
   shortcut.value = (all.shortcut as string) || 'Ctrl+Shift+Space'
+  mainShortcut.value = (all.mainShortcut as string) || 'Ctrl+Shift+M'
   exportDir.value = (all.exportDir as string) || ''
   idleThresholdSec.value = (all.idleThresholdSec as string) || '300'
   minSegmentSec.value = (all.minSegmentSec as string) || '60'
   shortcutError.value = (all.shortcutError as string) || null
+  mainShortcutError.value = (all.mainShortcutError as string) || null
   autostart.value = all.autostart === 'true'
 }
 
@@ -32,6 +36,7 @@ async function onToggleAutostart(): Promise<void> {
 
 async function saveAll(): Promise<void> {
   await window.api.settings.set('shortcut', shortcut.value.trim())
+  await window.api.settings.set('mainShortcut', mainShortcut.value.trim())
   await window.api.settings.set('exportDir', exportDir.value.trim())
   await window.api.settings.set('idleThresholdSec', idleThresholdSec.value.trim())
   await window.api.settings.set('minSegmentSec', minSegmentSec.value.trim())
@@ -63,8 +68,16 @@ onMounted(load)
       <label class="field">
         <span>快捷键</span>
         <input v-model="shortcut" spellcheck="false" placeholder="Ctrl+Shift+Space" />
+        <em class="hint">唤起快速添加小窗口</em>
       </label>
       <p v-if="shortcutError" class="error">{{ shortcutError }}</p>
+
+      <label class="field">
+        <span>唤醒主窗口快捷键</span>
+        <input v-model="mainShortcut" spellcheck="false" placeholder="Ctrl+Shift+M" />
+        <em class="hint">主窗口隐藏到托盘后，用该快捷键重新唤出</em>
+      </label>
+      <p v-if="mainShortcutError" class="error">{{ mainShortcutError }}</p>
 
       <label class="field">
         <span>导出目录</span>

@@ -9,8 +9,11 @@
 //! - 主窗口:关窗不退出(托盘驻留)。`CloseRequested` 在非退出期间
 //!   `api.prevent_close()` + `hide()`;退出由托盘「退出」置 `QUITTING` 后
 //!   `app.exit(0)`,`lib.rs` 的 `RunEvent::ExitRequested` 拆除追踪/快捷键。
-//! - 全局快捷键:tauri-plugin-global-shortcut。注册失败写 `shortcutError` 设置并
-//!   emit `shortcut://error`;成功清空错误设置。`settings_set` 改快捷键后重注册。
+//! - 全局快捷键:tauri-plugin-global-shortcut。两个组合键各司其职:
+//!   `shortcut`(默认 `Ctrl+Shift+Space`)唤起 Quick Add;`mainShortcut`
+//!   (默认 `Ctrl+Shift+M`)唤醒主窗口。注册失败各自写 `shortcutError` /
+//!   `mainShortcutError` 设置并 emit `shortcut://error` / `mainShortcut://error`;
+//!   成功清空对应错误设置。`settings_set` 改键后分别重注册。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -35,6 +38,9 @@ pub const QUICK_ADD_LABEL: &str = "quickadd";
 
 /// 当前已注册的快捷键字符串(None = 未注册)。`unregister` 用它反注册。
 static CURRENT_SHORTCUT: Mutex<Option<String>> = Mutex::new(None);
+
+/// 当前已注册的唤醒主窗口快捷键(None = 未注册)。反注册对照使用。
+static CURRENT_MAIN_SHORTCUT: Mutex<Option<String>> = Mutex::new(None);
 
 /// 托盘图标持有(进程生命周期内创建一次;下班 label 用 `set_text` 原地更新,
 /// 避免在菜单事件回调内重建菜单 —— Tauri 已知 panic 模式)。
@@ -343,6 +349,66 @@ pub fn unregister_shortcut(app: &AppHandle) {
 /// 快捷键变更(settings_set)后重注册。
 pub fn reregister_shortcut(app: &AppHandle) {
     register_shortcut(app);
+}
+
+/// 注册唤醒主窗口快捷键:读 `settings.mainShortcut`(默认 `Ctrl+Shift+M`),空串则卸载。
+/// 成功清空 `mainShortcutError`;失败写错误消息 + emit `mainShortcut://error`。
+pub fn register_main_shortcut(app: &AppHandle) {
+    unregister_main_shortcut(app);
+
+    let accel = {
+        let g = crate::db::get();
+        let conn = match g.as_ref() {
+            Some(c) => c,
+            None => return,
+        };
+        settings::get_with_default(conn, settings::KEY_MAIN_SHORTCUT)
+    };
+    if accel.trim().is_empty() {
+        return;
+    }
+
+    let accel_clone = accel.clone();
+    let result = app.global_shortcut().on_shortcut(
+        accel.as_str(),
+        move |app, _shortcut, event| {
+            // 仅按下触发(避免释放事件重复唤起)。
+            if event.state == ShortcutState::Pressed {
+                show_main_window(app);
+            }
+        },
+    );
+
+    match result {
+        Ok(()) => {
+            *CURRENT_MAIN_SHORTCUT.lock().expect("main shortcut mutex poisoned") = Some(accel_clone);
+            let g = crate::db::get();
+            if let Some(conn) = g.as_ref() {
+                let _ = settings::set(conn, settings::KEY_MAIN_SHORTCUT_ERROR, "");
+            }
+        }
+        Err(_e) => {
+            *CURRENT_MAIN_SHORTCUT.lock().expect("main shortcut mutex poisoned") = None;
+            let msg = shortcut_error_message(&accel);
+            let g = crate::db::get();
+            if let Some(conn) = g.as_ref() {
+                let _ = settings::set(conn, settings::KEY_MAIN_SHORTCUT_ERROR, &msg);
+            }
+            let _ = app.emit("mainShortcut://error", msg);
+        }
+    }
+}
+
+/// 反注册当前唤醒主窗口快捷键(幂等)。
+pub fn unregister_main_shortcut(app: &AppHandle) {
+    if let Some(accel) = CURRENT_MAIN_SHORTCUT.lock().expect("main shortcut mutex poisoned").take() {
+        let _ = app.global_shortcut().unregister(accel.as_str());
+    }
+}
+
+/// 唤醒主窗口快捷键变更(settings_set)后重注册。
+pub fn reregister_main_shortcut(app: &AppHandle) {
+    register_main_shortcut(app);
 }
 
 #[cfg(test)]

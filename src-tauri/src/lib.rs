@@ -135,11 +135,14 @@ fn settings_set(app: tauri::AppHandle, key: String, value: String) -> Result<(),
         settings::set(conn, &key, &value).map_err(|e| e.to_string())?;
     }
     // 切片6 外壳副作用(对齐 Electron `IPC.settings.set` 的响应):
-    // - shortcut 变更 → 卸载旧快捷键并重注册(失败写 shortcutError + shortcut://error);
+    // - shortcut / mainShortcut 变更 → 各自卸载旧快捷键并重注册(失败写对应错误设置 + 事件);
     // - idleThresholdSec → no-op(阈值由 tracker 轮询实时读取);
     // - 其余键 → 仅刷新托盘菜单 label。
     if key == settings::KEY_SHORTCUT {
         shell::reregister_shortcut(&app);
+    }
+    if key == settings::KEY_MAIN_SHORTCUT {
+        shell::reregister_main_shortcut(&app);
     }
     let _ = shell::refresh_tray_menu(&app);
     Ok(())
@@ -396,6 +399,7 @@ pub fn run() {
             }
             shell::create_quick_add_window(handle);
             let _ = shell::create_tray(handle);
+            shell::register_main_shortcut(handle);
             shell::register_shortcut(handle);
             Ok(())
         })
@@ -440,6 +444,7 @@ pub fn run() {
             shell::QUITTING.store(true, std::sync::atomic::Ordering::SeqCst);
             #[cfg(windows)]
             stop_tracking_system();
+            shell::unregister_main_shortcut(app);
             shell::unregister_shortcut(app);
         } else if let tauri::RunEvent::Exit = event {
             let _ = event;
