@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
+import type { UpdateState, UpdateVersion } from '@shared/types'
+import { UPDATE_SETTINGS_KEYS } from '@shared/types'
 import { captureAccelerator } from '../utils'
 
 const shortcut = ref('')
@@ -14,6 +16,13 @@ const autostartError = ref<string | null>(null)
 const saved = ref(false)
 const capturing = ref<'shortcut' | 'mainShortcut' | null>(null)
 
+const autoUpdateCheck = ref(true)
+const autoUpdateError = ref<string | null>(null)
+const updateState = ref<UpdateState>({ kind: 'idle' })
+const updateVersion = ref<UpdateVersion>({ sha: null, devBuild: true, lastCheck: null })
+
+let detachStatus: (() => void) | undefined
+
 async function load(): Promise<void> {
   const all = await window.api.settings.getAll()
   shortcut.value = (all.shortcut as string) || 'Ctrl+Shift+Space'
@@ -24,6 +33,7 @@ async function load(): Promise<void> {
   shortcutError.value = (all.shortcutError as string) || null
   mainShortcutError.value = (all.mainShortcutError as string) || null
   autostart.value = all.autostart === 'true'
+  autoUpdateCheck.value = (all.autoUpdateCheck as string) !== 'false'
 }
 
 async function onToggleAutostart(): Promise<void> {
@@ -34,6 +44,32 @@ async function onToggleAutostart(): Promise<void> {
     autostart.value = !autostart.value
     autostartError.value = String(e)
   }
+}
+
+async function onToggleAutoUpdate(): Promise<void> {
+  try {
+    await window.api.settings.set(UPDATE_SETTINGS_KEYS[0], autoUpdateCheck.value ? 'true' : 'false')
+    autoUpdateError.value = null
+  } catch (e) {
+    autoUpdateCheck.value = !autoUpdateCheck.value
+    autoUpdateError.value = String(e)
+  }
+}
+
+async function refreshUpdate(): Promise<void> {
+  updateVersion.value = await window.api.update.getVersion()
+  updateState.value = await window.api.update.getState()
+}
+
+async function onCheckUpdate(): Promise<void> {
+  await window.api.update.check()
+  await refreshUpdate()
+}
+
+function onApplyUpdate(): void {
+  const ok = window.confirm('将下载并替换为最新 nightly 版本,随后自动重启应用。当前活动记录会与托盘退出一致地正常收尾。')
+  if (!ok) return
+  void window.api.update.apply()
 }
 
 async function saveAll(): Promise<void> {
@@ -82,10 +118,15 @@ function onCaptureKeydown(e: KeyboardEvent): void {
 
 onMounted(() => {
   load()
+  detachStatus = window.api.update.onStatus((s) => {
+    updateState.value = s
+  })
+  void refreshUpdate()
   window.addEventListener('keydown', onCaptureKeydown, true)
 })
 
 onBeforeUnmount(() => {
+  detachStatus?.()
   window.removeEventListener('keydown', onCaptureKeydown, true)
 })
 </script>
@@ -155,6 +196,42 @@ onBeforeUnmount(() => {
         <em class="hint">开启后开机时自动启动并最小化到托盘</em>
       </label>
       <p v-if="autostartError" class="error">{{ autostartError }}</p>
+
+      <label class="field">
+        <div class="check-row">
+          <input type="checkbox" v-model="autoUpdateCheck" @change="onToggleAutoUpdate" />
+          <span>自动检查更新</span>
+        </div>
+        <em class="hint">启动后每 24 小时自动检查 nightly 更新，新版本仅经托盘提示</em>
+      </label>
+      <p v-if="autoUpdateError" class="error">{{ autoUpdateError }}</p>
+
+      <h2 class="section-title">更新</h2>
+      <div class="field">
+        <span>当前版本</span>
+        <div class="update-line">
+          <span>{{ updateVersion.sha ? `nightly-${updateVersion.sha.slice(0, 7)}` : '开发模式' }}</span>
+          <button class="ghost" :disabled="updateVersion.devBuild" @click="onCheckUpdate">检查更新</button>
+        </div>
+        <em class="hint">开发模式（本地构建）不参与更新</em>
+      </div>
+      <p v-if="updateState.kind === 'failed'" class="error">{{ updateState.reason }}</p>
+      <div v-else-if="updateState.kind === 'available'" class="field">
+        <div class="update-line">
+          <span>新版本构建于 {{ updateState.builtAt }}</span>
+          <button class="primary" @click="onApplyUpdate">立即更新</button>
+        </div>
+      </div>
+      <div v-else-if="updateState.kind === 'downloading'" class="field">
+        <div class="progress">
+          <div class="bar" :style="{ width: updateState.progress + '%' }"></div>
+        </div>
+        <em class="hint">正在下载 {{ updateState.progress }}%…</em>
+      </div>
+      <div v-else-if="updateState.kind === 'upToDate'" class="ok">已是最新版本</div>
+      <em v-if="updateVersion.lastCheck" class="hint last-check">
+        上次检查：{{ new Date(updateVersion.lastCheck).toLocaleString() }}
+      </em>
 
       <div class="actions">
         <button class="primary" @click="saveAll">保存</button>
@@ -258,5 +335,43 @@ onBeforeUnmount(() => {
   color: var(--danger);
   font-size: 12px;
   margin: -6px 0 0;
+}
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 8px 0 0;
+  color: var(--text);
+}
+.update-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.update-line button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.update-line button:disabled:hover {
+  border-color: transparent;
+}
+.progress {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.ok {
+  color: var(--done);
+  font-size: 12px;
+}
+.last-check {
+  display: block;
 }
 </style>

@@ -1,0 +1,13 @@
+{
+  "comment": "更新子系统跨语言契约对拍锚点:UpdateState 序列化 / UpdateVersion 序列化 / settings 键名。任一侧改动序列化形状或键名,都必须同步本夹具,否则 cargo test(vitest)对应用例漂移报警。",
+  "states": {
+    "idle": "{\"kind\":\"idle\"}",
+    "devBuild": "{\"kind\":\"devBuild\"}",
+    "upToDate": "{\"kind\":\"upToDate\"}",
+    "available": "{\"kind\":\"available\",\"sha\":\"abc123\",\"builtAt\":\"2026-08-25T03:00:00+08:00\"}",
+    "downloading": "{\"kind\":\"downloading\",\"progress\":42}",
+    "failed": "{\"kind\":\"failed\",\"reason\":\"网络错误\"}"
+  },
+  "version": "{\"sha\":\"abc123\",\"devBuild\":false,\"lastCheck\":\"2026-08-25T03:00:00.000Z\"}",
+  "settingsKeys": ["autoUpdateCheck", "updateNotifiedSha", "lastUpdateCheck"]
+}

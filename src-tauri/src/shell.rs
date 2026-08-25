@@ -49,7 +49,12 @@ static TRAY: Mutex<Option<TrayIcon>> = Mutex::new(None);
 /// 托盘「下班 / 恢复记录」菜单项引用:`refresh_tray_menu` 只 `set_text` 换 label。
 static TRAY_TOGGLE_ITEM: Mutex<Option<MenuItem<tauri::Wry>>> = Mutex::new(None);
 
+/// 托盘「检查更新 / 更新到 nightly-…」菜单项引用:更新子系统状态变更时仅
+/// `set_text` / `set_enabled` 原地更新(对齐 `TRAY_TOGGLE_ITEM` 模式)。
+static TRAY_UPDATE_ITEM: Mutex<Option<MenuItem<tauri::Wry>>> = Mutex::new(None);
+
 const TRAY_TOGGLE_ID: &str = "tray-toggle";
+const TRAY_UPDATE_ID: &str = "tray-update";
 const TRAY_SHOW_ID: &str = "tray-show";
 const TRAY_QUIT_ID: &str = "tray-quit";
 
@@ -256,6 +261,12 @@ pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
                     t.set_off_work(&GlobalConn, &mut ProdDeps, on);
                 }
                 let _ = refresh_tray_menu(app);
+            } else if event.id() == TRAY_UPDATE_ID {
+                // 更新入口:打开主窗口并导航到设置页,用户在设置页确认后执行替换+重启。
+                show_main_window(app);
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.eval("location.hash='#/settings'");
+                }
             } else if event.id() == TRAY_SHOW_ID {
                 show_main_window(app);
             } else if event.id() == TRAY_QUIT_ID {
@@ -275,14 +286,35 @@ pub fn refresh_tray_menu(app: &AppHandle) -> tauri::Result<()> {
     if let Some(item) = TRAY_TOGGLE_ITEM.lock().expect("tray toggle mutex poisoned").as_ref() {
         return item.set_text(off_work_label(off_work));
     }
+    // 全功能托盘(切片6):[下班切换] --- [更新项] [显示主窗口] [退出]。
+    let update_state = crate::update::get_state();
     let toggle = MenuItem::with_id(app, TRAY_TOGGLE_ID, off_work_label(off_work), true, None::<&str>)?;
+    let update = MenuItem::with_id(
+        app,
+        TRAY_UPDATE_ID,
+        &crate::update::tray_update_label(&update_state),
+        crate::update::tray_update_enabled(&update_state),
+        None::<&str>,
+    )?;
     let show = MenuItem::with_id(app, TRAY_SHOW_ID, "显示主窗口", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, TRAY_QUIT_ID, "退出", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&toggle, &separator, &show, &quit])?;
+    let menu = Menu::with_items(app, &[&toggle, &separator, &update, &show, &quit])?;
     *TRAY_TOGGLE_ITEM.lock().expect("tray toggle mutex poisoned") = Some(toggle);
+    *TRAY_UPDATE_ITEM.lock().expect("tray update mutex poisoned") = Some(update);
     if let Some(tray) = TRAY.lock().expect("tray mutex poisoned").as_ref() {
         tray.set_menu(Some(menu))?;
+    }
+    Ok(())
+}
+
+/// 原地刷新托盘「更新」菜单项(`set_text` + `set_enabled`),供更新子系统状态变更时
+/// 调用;菜单尚未建立(托盘未创建)时静默无操作。
+pub fn refresh_tray_update_item() -> tauri::Result<()> {
+    let state = crate::update::get_state();
+    if let Some(item) = TRAY_UPDATE_ITEM.lock().expect("tray update mutex poisoned").as_ref() {
+        item.set_text(&crate::update::tray_update_label(&state))?;
+        item.set_enabled(crate::update::tray_update_enabled(&state))?;
     }
     Ok(())
 }

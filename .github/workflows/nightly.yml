@@ -52,7 +52,7 @@ jobs:
         if: steps.check.outputs.skip == 'false'
         uses: ./.github/actions/build-windows
         with:
-          zip-name: Herbie-nightly-win-x64.zip
+          exe-name: Herbie-nightly-win-x64.exe
 
       - name: Generate release notes
         if: steps.check.outputs.skip == 'false'
@@ -73,13 +73,25 @@ jobs:
           } > release_body.md
           cat release_body.md
 
-      - name: Move nightly tag
+      - name: Generate manifest (latest.json)
         if: steps.check.outputs.skip == 'false'
         shell: bash
         run: |
           set -euo pipefail
-          git tag -f nightly "$GITHUB_SHA"
-          git push origin refs/tags/nightly --force
+          sha=$(sha256sum Herbie-nightly-win-x64.exe | awk '{print $1}')
+          built_at=$(TZ=Asia/Shanghai date '+%Y-%m-%dT%H:%M:%S%:z')
+          printf '{"sha":"%s","builtAt":"%s","exeUrl":"https://github.com/swairr/herbie/releases/download/nightly/Herbie-nightly-win-x64.exe","exeSha256":"%s"}\n' \
+            "${GITHUB_SHA}" "${built_at}" "${sha}" > latest.json
+          cat latest.json
+
+      - name: Delete old zip asset
+        if: steps.check.outputs.skip == 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 旧 zip 与裸 exe 双下载入口易误导,清理之;release/资产不存在时静默跳过。
+          gh release delete-asset nightly Herbie-nightly-win-x64.zip --repo "$GITHUB_REPOSITORY" --yes || true
 
       - name: Publish release
         if: steps.check.outputs.skip == 'false'
@@ -90,4 +102,28 @@ jobs:
           prerelease: true
           make_latest: 'false'
           body_path: release_body.md
-          files: Herbie-nightly-win-x64.zip
+          files: |
+            Herbie-nightly-win-x64.exe
+            latest.json
+
+      # 冒烟:确认发布后的 latest.json 可访问、sha/exeSha256 与本地资产一致,再推进 nightly tag。
+      # 顺序约束:先发布(资产可就地更新)、后移 tag —— 若发布/校验失败,tag 停留在旧 commit,
+      # 下次运行的「Check for new commits」会再次检测到新 commit 并重试,通道不自锁。
+      - name: Verify published manifest
+        if: steps.check.outputs.skip == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          local_sha=$(sha256sum Herbie-nightly-win-x64.exe | awk '{print $1}')
+          json=$(curl -fsSL https://github.com/swairr/herbie/releases/download/nightly/latest.json)
+          echo "$json"
+          grep -q "\"sha\":\"${GITHUB_SHA}\"" <<< "$json"
+          grep -q "\"exeSha256\":\"${local_sha}\"" <<< "$json"
+
+      - name: Move nightly tag
+        if: steps.check.outputs.skip == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag -f nightly "$GITHUB_SHA"
+          git push origin refs/tags/nightly --force

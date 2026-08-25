@@ -46,12 +46,12 @@ jobs:
       - name: Build Windows portable (with tests)
         uses: ./.github/actions/build-windows
         with:
-          zip-name: Herbie-win-x64.zip
+          exe-name: Herbie-win-x64.exe
           run-tests: true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: Herbie-win-x64-${{ github.sha }}
-          path: Herbie-win-x64.zip
+          path: Herbie-win-x64.exe
           retention-days: 14

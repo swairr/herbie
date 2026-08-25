@@ -18,10 +18,18 @@ pub const KEY_SHORTCUT_ERROR: &str = "shortcutError";
 pub const KEY_MAIN_SHORTCUT_ERROR: &str = "mainShortcutError";
 /// 自启动键:不落 DB 表(注册表 HKCU Run 为唯一事实源),入库特判直读插件状态。
 pub const KEY_AUTOSTART: &str = "autostart";
+/// 更新子系统键(单源;`update.rs` 经 `use crate::settings::*` 引用,renderer 侧键名由
+/// `tests/fixtures/update-state.json` 的 `settingsKeys` 与 TS `UPDATE_SETTINGS_KEYS` 对拍)。
+pub const KEY_AUTO_UPDATE_CHECK: &str = "autoUpdateCheck";
+pub const KEY_NOTIFIED_SHA: &str = "updateNotifiedSha";
+pub const KEY_LAST_CHECK: &str = "lastUpdateCheck";
 
 /// 默认值表(对齐 TS `DEFAULTS`。TS 中 `shortcutError: null`,`getDefault` 把 null/undefined
 /// 归一为空串;此处直接给空串)。
 fn default_for(key: &str) -> String {
+    if key == KEY_AUTO_UPDATE_CHECK {
+        return "true".to_string();
+    }
     match key {
         "shortcut" => "Ctrl+Shift+Space".to_string(),
         "mainShortcut" => "Ctrl+Shift+M".to_string(),

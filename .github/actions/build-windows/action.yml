@@ -1,8 +1,8 @@
 name: 'Build Windows portable'
-description: 'Shared Windows build steps: setup pnpm/Node, install deps, cargo cache, (optional) cargo tests, tauri build, compress portable zip'
+description: 'Shared Windows build steps: setup pnpm/Node, install deps, cargo cache, (optional) cargo tests, tauri build, copy portable exe'
 inputs:
-  zip-name:
-    description: 'File name of the resulting zip'
+  exe-name:
+    description: 'File name of the resulting exe (copied to workspace root)'
     required: true
   run-tests:
     description: 'Run cargo tests before building'
@@ -42,7 +42,10 @@ runs:
     - name: Build (no bundle)
       run: pnpm tauri build --no-bundle
       shell: bash
+      env:
+        # 嵌入 commit SHA → 内嵌 `option_env!("HERBIE_NIGHTLY_SHA")`,客户端据此判断是否有更新。
+        HERBIE_NIGHTLY_SHA: ${{ github.sha }}
 
-    - name: Compress portable exe
-      run: Compress-Archive -Path src-tauri\target\release\herbie.exe -DestinationPath ${{ inputs.zip-name }}
+    - name: Copy exe to workspace root
+      run: Copy-Item src-tauri\target\release\herbie.exe "${{ inputs.exe-name }}"
       shell: pwsh

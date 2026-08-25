@@ -13,6 +13,7 @@ mod shell;
 mod time;
 mod todos;
 mod tracker;
+mod update;
 #[cfg(windows)]
 mod win;
 
@@ -365,6 +366,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // 沿用旧 Electron 数据路径 `%APPDATA%/herbie/herbie.db`(数据零迁移,见 db.rs)。
             // 打开/迁移失败不得静默 abort:弹原生错误框说明路径与原因后退出(而非 panic=abort 硬终止)。
@@ -401,6 +403,11 @@ pub fn run() {
             let _ = shell::create_tray(handle);
             shell::register_main_shortcut(handle);
             shell::register_shortcut(handle);
+            // 更新子系统:内嵌 SHA 的构建(CI nightly/CI artifact)启动自动检查线程
+            // (首查 30s 后,此后每 24h);本地/dev 构建无 SHA,更新功能整体禁用。
+            if update::build_sha().is_some() {
+                update::start_update_check_system(handle);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -428,7 +435,11 @@ pub fn run() {
             shell_open_external,
             clipboard_read_text,
             dialog_pick_directory,
-            window_quick_add_hide
+            window_quick_add_hide,
+            update::update_check,
+            update::update_get_state,
+            update::update_get_version,
+            update::update_apply
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -444,6 +455,7 @@ pub fn run() {
             shell::QUITTING.store(true, std::sync::atomic::Ordering::SeqCst);
             #[cfg(windows)]
             stop_tracking_system();
+            update::stop_update_check_system();
             shell::unregister_main_shortcut(app);
             shell::unregister_shortcut(app);
         } else if let tauri::RunEvent::Exit = event {

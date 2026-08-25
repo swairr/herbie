@@ -8,3 +8,5 @@ dist/
 .idea/
 *.tsbuildinfo
 coverage/
+# 本地规划工作产物(不入库)
+.kilo/plans/

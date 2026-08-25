@@ -6,8 +6,9 @@
 //   settings_get / settings_set / settings_get_all(切片1 已注册)
 //   segments_list / segments_update / journal_* / tracker_get_off_work / tracker_set_off_work
 //   export_default_dir / export_pull_day / export_write_file(切片5 已注册)
+//   update_check / update_get_state / update_get_version / update_apply(更新子系统,切片6.1)
 //   shell_open_external / clipboard_read_text / dialog_pick_directory / window_quick_add_hide
-//   事件:shortcut://error  mainShortcut://error  quickadd://show | hide | blur  todos://changed
+//   事件:shortcut://error  mainShortcut://error  quickadd://show | hide | blur  todos://changed  update://status
 //
 // 切片5:export/time/journal 三个导出方法改为全 TS 实现 —— 拉数据(invoke)→ 调 shared
 // markdown 纯函数生成 → 写文件(invoke)→ 返回 ExportResult。Rust 不再需要 export_export_markdown
@@ -30,7 +31,9 @@ import type {
   Segment,
   Settings,
   TimeExportResult,
-  Todo
+  Todo,
+  UpdateState,
+  UpdateVersion
 } from '@shared/types'
 
 // 与 Rust `export_pull_day` 的 `ExportDayData` 对齐:segments/journal 当日数据 +
@@ -152,6 +155,13 @@ export function createTauriApi(): Api {
     },
     shell: {
       openExternal: (url) => invoke<void>('shell_open_external', { url })
+    },
+    update: {
+      check: () => invoke<void>('update_check'),
+      getState: () => invoke<UpdateState>('update_get_state'),
+      getVersion: () => invoke<UpdateVersion>('update_get_version'),
+      apply: () => invoke<void>('update_apply'),
+      onStatus: (cb) => attach('update://status', (p) => cb(p as UpdateState))
     },
     clipboard: {
       readText: () => invoke<string>('clipboard_read_text')

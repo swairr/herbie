@@ -38,9 +38,14 @@ export interface Settings {
   shortcutError?: string | null
   mainShortcutError?: string | null
   autostart: string
+  autoUpdateCheck: string
 }
 
 export type SettingsKey = keyof Settings
+
+// 更新子系统 settings 键名(与 Rust `settings::KEY_*` 保持一致;对拍锚点:
+// `tests/fixtures/update-state.json` 的 `settingsKeys` + cargo `serialized_ipc_shapes_match_shared_fixture`)。
+export const UPDATE_SETTINGS_KEYS = ['autoUpdateCheck', 'updateNotifiedSha', 'lastUpdateCheck'] as const
 
 export interface ExportResult {
   ok: boolean
@@ -68,6 +73,22 @@ export interface SegmentPatch {
 
 export interface OffWorkState {
   offWork: boolean
+}
+
+// 与 Rust `update::UpdateState` 对齐(tagged enum,serde tag="kind" + camelCase)。
+export type UpdateState =
+  | { kind: 'idle' }
+  | { kind: 'devBuild' }
+  | { kind: 'upToDate' }
+  | { kind: 'available'; sha: string; builtAt: string }
+  | { kind: 'downloading'; progress: number }
+  | { kind: 'failed'; reason: string }
+
+// 与 Rust `update::UpdateVersion` 对齐(camelCase)。
+export interface UpdateVersion {
+  sha: string | null
+  devBuild: boolean
+  lastCheck: string | null
 }
 
 export interface TimeExportResult extends ExportResult {
@@ -139,6 +160,13 @@ export interface Api {
   }
   shell: {
     openExternal: (url: string) => Promise<void>
+  }
+  update: {
+    check: () => Promise<void>
+    getState: () => Promise<UpdateState>
+    getVersion: () => Promise<UpdateVersion>
+    apply: () => Promise<void>
+    onStatus: (cb: (s: UpdateState) => void) => () => void
   }
   clipboard: {
     readText: () => Promise<string>
