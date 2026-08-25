@@ -41,7 +41,7 @@ function onAddTitleKeydown(e: KeyboardEvent): void {
 }
 
 function onAddDetailKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+  if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     void submitAdd()
   } else if (e.key === 'Escape') {

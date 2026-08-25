@@ -6,8 +6,7 @@ import { useAddTodo } from '../composables/useAddTodo'
 const title = ref('')
 const titleInput = ref<HTMLInputElement | null>(null)
 const detail = ref('')
-const placeholder = ref('')
-const clipboardFilled = ref(false)
+const detailInput = ref<HTMLTextAreaElement | null>(null)
 const confirmMsg = ref('')
 const dirty = ref(false)
 const { shaking, submit: submitTodo } = useAddTodo(title, detail)
@@ -26,8 +25,6 @@ async function flushDraft(hideAfter = false): Promise<void> {
 }
 
 async function wake(): Promise<void> {
-  const clip = await window.api.clipboard.readText()
-  placeholder.value = clip ? clip.slice(0, 200) : ''
   const raw = await window.api.settings.get('draft')
   if (raw) {
     try {
@@ -42,23 +39,27 @@ async function wake(): Promise<void> {
     title.value = ''
     detail.value = ''
   }
+
+  let selectAll = false
+  if (!title.value.trim()) {
+    const clip = await window.api.clipboard.readText()
+    if (clip.trim()) {
+      title.value = clip.slice(0, 200)
+      selectAll = true
+    }
+  }
   dirty.value = false
-  clipboardFilled.value = false
-  focusTitle()
+  focusTitle(selectAll)
 }
 
-function focusTitle(): void {
+function focusTitle(selectAll = false): void {
   const attempt = (remaining = 10): void => {
     const el = titleInput.value
     if (!el) return
 
-    const active = document.activeElement
-    if (active && active !== document.body && active !== document.documentElement && active !== el) {
-      return
-    }
-
     window.focus()
     el.focus({ preventScroll: true })
+    if (selectAll) el.select()
     if (document.activeElement !== el && remaining > 0) {
       setTimeout(() => attempt(remaining - 1), 16)
     }
@@ -67,19 +68,20 @@ function focusTitle(): void {
   setTimeout(() => attempt(), 0)
 }
 
-function onTab(e: KeyboardEvent): void {
-  if (e.key !== 'Tab') return
-  const target = e.target as HTMLElement
-  if (target?.id !== 'qa-title') return
-  if (!clipboardFilled.value && title.value.trim() === '' && placeholder.value) {
-    title.value = placeholder.value
-    clipboardFilled.value = true
-    dirty.value = true
+function onTitleKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Enter') {
     e.preventDefault()
-    const el = titleInput.value
-    el?.focus()
-    const len = title.value.length
-    el?.setSelectionRange(len, len)
+    void onSubmit()
+  } else if (e.key === 'Tab') {
+    e.preventDefault()
+    detailInput.value?.focus()
+  }
+}
+
+function onDetailKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    void onSubmit()
   }
 }
 
@@ -103,11 +105,6 @@ function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
     e.preventDefault()
     void onEsc()
-  } else if (e.key === 'Enter' && (e.target as HTMLElement)?.id === 'qa-title') {
-    e.preventDefault()
-    void onSubmit()
-  } else {
-    onTab(e)
   }
 }
 
@@ -116,7 +113,6 @@ function parsedLabels(): string[] {
 }
 
 function onShow(): void {
-  focusTitle()
   void wake()
 }
 function onHide(): void {
@@ -157,21 +153,24 @@ onBeforeUnmount(() => {
       autofocus
       v-model="title"
       spellcheck="false"
-      :placeholder="placeholder ? '剪贴板：' + placeholder : '输入标题，Enter 提交'"
+      placeholder="输入标题，Enter 提交"
       @input="markDirty"
+      @keydown="onTitleKeydown"
     />
     <textarea
+      ref="detailInput"
       id="qa-detail"
       v-model="detail"
       spellcheck="false"
       rows="3"
       placeholder="详情（#标签 自动识别）"
       @input="markDirty"
+      @keydown="onDetailKeydown"
     ></textarea>
     <div class="footer">
       <span v-if="parsedLabels().length" class="labels">#{{ parsedLabels().join(' #') }}</span>
       <span v-if="confirmMsg" class="ok">{{ confirmMsg }}</span>
-      <span v-else class="hint">Tab 填剪贴板 · Enter 提交 · Esc 收起 · 失焦自收起</span>
+      <span v-else class="hint">Enter 提交 · Shift+Enter 换行 · Esc 收起 · 失焦自收起</span>
     </div>
   </div>
 </template>
