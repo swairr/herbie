@@ -6,6 +6,9 @@
 //! - 检查清单固定 `MANIFEST_URL`(nightly release 附带的 `latest.json`),sha 不等即视为
 //!   有更新(nightly 单向前进,只做不等比较足够)。
 //! - 状态变更统一走 `set_state`:`update://status` 事件 + 托盘菜单项原地刷新。
+//! - 排查设施:所有失败经 `fail`/`note_failure` 收敛——追写 `%APPDATA%/herbie/update.log`,
+//!   并把带本地时间戳的原因持久化到 settings `lastUpdateError`(设置页展示,成功后清空);
+//!   失败原因必须携带可定位的技术细节(HTTP 状态码 / 哈希对比 / 文件路径 / 响应预览)。
 //! - 替换流程:下载到 exe 同目录 `herbie_new.exe` → sha256 校验 → spawn 分离的 PowerShell
 //!   helper(等待旧进程退出 → 重试 Move → Start-Process)→ `app.exit(0)` 复用现有退出清理
 //!   路径(lib.rs RunEvent::ExitRequested:关开放段/拆钩子/反注册快捷键)。
@@ -39,7 +42,7 @@ pub fn build_sha() -> Option<&'static str> {
 /// `autoUpdateCheck` 由 renderer 设置页开关读写;`updateNotifiedSha` / `lastUpdateCheck`
 /// 由本模块自用,默认空串。
 pub(crate) use crate::settings::{
-    KEY_AUTO_UPDATE_CHECK, KEY_LAST_CHECK, KEY_NOTIFIED_SHA,
+    KEY_AUTO_UPDATE_CHECK, KEY_LAST_CHECK, KEY_LAST_ERROR, KEY_NOTIFIED_SHA,
 };
 
 /// nightly release 附带的 `latest.json`,与 CI `nightly.yml` 生成格式对齐(camelCase)。
@@ -116,9 +119,13 @@ pub fn tray_update_label(state: &UpdateState) -> String {
     }
 }
 
-/// 托盘「更新」菜单项是否可点:仅 Available(点击打开主窗口导航设置页,确认后更新)。
+/// 托盘「更新」菜单项是否可点:Available(执行入口)与 Failed(点击打开设置页查看
+/// 具体失败原因);其余状态点击无意义,保持置灰。
 pub fn tray_update_enabled(state: &UpdateState) -> bool {
-    matches!(state, UpdateState::Available { .. })
+    matches!(
+        state,
+        UpdateState::Available { .. } | UpdateState::Failed { .. }
+    )
 }
 
 /// 新 exe 的落盘路径:当前 exe 同目录 `herbie_new.exe`。
@@ -182,19 +189,96 @@ fn set_state(app: &AppHandle, state: UpdateState) {
     let _ = crate::shell::refresh_tray_update_item();
 }
 
+// ---- 排查设施:更新日志 + 失败记录 ----
+
+/// 更新日志文件路径:`%APPDATA%/herbie/update.log`(与数据库同目录,用户可直接打开)。
+pub fn update_log_path(appdata: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(appdata)
+        .join("herbie")
+        .join("update.log")
+}
+
+/// 单行日志格式:`<本地时间> [<阶段>] <内容>`。
+pub fn format_log_line(local_ts: &str, stage: &str, msg: &str) -> String {
+    format!("{local_ts} [{stage}] {msg}")
+}
+
+/// 追加一行到更新日志(append 模式)。日志是排查辅助设施,任何写失败(APPDATA 缺失 /
+/// 目录不可写)都静默忽略,不得反噬更新主流程。时间戳用本机时区——排查场景以用户
+/// 看到的挂钟时间为准。
+pub fn append_log(stage: &str, msg: &str) {
+    let Ok(appdata) = std::env::var("APPDATA") else {
+        return;
+    };
+    let path = update_log_path(&appdata);
+    let Some(dir) = path.parent() else {
+        return;
+    };
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let line = format_log_line(&ts, stage, msg) + "\n";
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = std::io::Write::write_all(&mut f, line.as_bytes());
+    }
+}
+
+/// 记录一次失败到排查设施(不推进状态机):落更新日志 + 把 `[本地时间] 原因` 持久化到
+/// settings `lastUpdateError`,供设置页跨重启展示;成功检查后清空。自动检查失败同样
+/// 走这里,保证失败可见可查。
+fn note_failure(stage: &str, reason: &str) {
+    append_log(stage, reason);
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    GlobalConn.lock_conn(|conn| {
+        let _ = settings::set(conn, KEY_LAST_ERROR, &format!("[{stamp}] {reason}"));
+    });
+}
+
+/// 失败的单一出口:先记排查设施,再以 Failed 广播(设置页红字 + 托盘「更新失败」)。
+fn fail(app: &AppHandle, stage: &str, reason: String) {
+    note_failure(stage, &reason);
+    set_state(app, UpdateState::Failed { reason });
+}
+
 // ---- 检查 ----
 
+/// 给 reqwest 网络错误补充人类可读的分类提示(超时 / 连接失败)。
+fn net_hint(e: &reqwest::Error) -> &'static str {
+    if e.is_timeout() {
+        "(超时)"
+    } else if e.is_connect() {
+        "(无法建立连接)"
+    } else {
+        ""
+    }
+}
+
 fn fetch_manifest() -> Result<UpdateManifest, String> {
-    let body = reqwest::blocking::Client::builder()
+    let resp = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| format!("构造请求客户端失败: {e}"))?
         .get(manifest_url())
         .send()
-        .map_err(|e| format!("获取更新清单失败: {e}"))?
+        .map_err(|e| format!("获取更新清单失败{}: {e}", net_hint(&e)))?;
+    let status = resp.status();
+    if !status.is_success() {
+        // 显式报状态码与地址:reqwest 对非 2xx 不视为错误,裸文本 404 会被下面的
+        // JSON 解析吞成难懂的解析失败,排查时无从下手。
+        return Err(format!(
+            "清单请求返回异常状态码: HTTP {status} ({})",
+            manifest_url()
+        ));
+    }
+    let text = resp
         .text()
-        .map_err(|e| format!("读取更新清单失败: {e}"))?;
-    parse_manifest(&body)
+        .map_err(|e| format!("读取更新清单响应体失败: HTTP {status}: {e}"))?;
+    parse_manifest(&text).map_err(|e| {
+        // 附响应开头片段:能直接看出代理劫持页 / CDN HTML 错误页等部署侧问题。
+        let head: String = text.chars().take(120).collect();
+        format!("{e}(HTTP {status},响应开头: {head})")
+    })
 }
 
 fn auto_update_enabled() -> bool {
@@ -220,7 +304,8 @@ fn notify_new_version(app: &AppHandle, manifest: &UpdateManifest) {
 }
 
 /// 执行一轮检查。dev/本地构建(无内嵌 SHA)直接进入 DevBuild,不发起网络请求;
-/// 自动检查失败静默(不打扰);手动检查失败写状态供设置页展示。
+/// 失败一律落排查设施(日志 + lastUpdateError),但只有手动检查才推进状态机展示,
+/// 自动检查保持安静(仅托盘/设置页沉淀,不弹打扰)。
 fn check_once(app: &AppHandle, manual: bool) {
     let local = build_sha();
     if local.is_none() {
@@ -235,6 +320,8 @@ fn check_once(app: &AppHandle, manual: bool) {
                     KEY_LAST_CHECK,
                     &crate::time::iso_utc_z_millis(chrono::Utc::now()),
                 );
+                // 成功即清空上次失败记录:设置页不再显示已自愈的旧错误。
+                let _ = settings::set(conn, KEY_LAST_ERROR, "");
             });
             if is_update_available(local, &manifest.sha) {
                 notify_new_version(app, &manifest);
@@ -244,8 +331,10 @@ fn check_once(app: &AppHandle, manual: bool) {
             set_state(app, state);
         }
         Err(e) => {
-            // 手动检查失败仅写入 Failed,但不得覆盖已确认的 Available(否则托盘/设置页
-            // 更新入口一起失效,恢复只能等下一次成功检查——最坏 24h)。
+            // 自动与手动失败都记日志/lastUpdateError;但 Failed 只由手动检查写入状态机,
+            // 且不得覆盖已确认的 Available(否则托盘/设置页更新入口一起失效,恢复只能
+            // 等下一次成功检查——最坏 24h)。
+            note_failure("检查", &e);
             if manual && !matches!(get_state(), UpdateState::Available { .. }) {
                 set_state(app, UpdateState::Failed { reason: e });
             }
@@ -325,7 +414,7 @@ fn apply_inner(app: &AppHandle) {
     let manifest = match fetch_manifest() {
         Ok(m) => m,
         Err(e) => {
-            set_state(app, UpdateState::Failed { reason: e });
+            fail(app, "获取清单", e);
             return;
         }
     };
@@ -340,7 +429,7 @@ fn apply_inner(app: &AppHandle) {
     let exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
-            set_state(app, UpdateState::Failed { reason: format!("无法定位当前程序: {e}") });
+            fail(app, "定位程序", format!("无法定位当前程序: {e}"));
             return;
         }
     };
@@ -351,27 +440,31 @@ fn apply_inner(app: &AppHandle) {
     let mut file = match create_download_file(&new_exe) {
         Ok(f) => f,
         Err(e) => {
-            set_state(app, UpdateState::Failed { reason: format!("无法创建下载文件: {e}") });
+            fail(
+                app,
+                "创建下载文件",
+                format!("无法创建下载文件 {}: {e}", new_exe.display()),
+            );
             return;
         }
     };
     if let Err(e) = download_exe(app, &manifest, &mut file) {
         drop(file);
         let _ = std::fs::remove_file(&new_exe);
-        set_state(app, UpdateState::Failed { reason: e });
+        fail(app, "下载", e);
         return;
     }
     use std::io::{Seek, SeekFrom, Write};
     if let Err(e) = file.flush() {
         drop(file);
         let _ = std::fs::remove_file(&new_exe);
-        set_state(app, UpdateState::Failed { reason: format!("写入临时文件失败: {e}") });
+        fail(app, "写入临时文件", format!("写入临时文件失败: {e}"));
         return;
     }
     if let Err(e) = file.seek(SeekFrom::Start(0)) {
         drop(file);
         let _ = std::fs::remove_file(&new_exe);
-        set_state(app, UpdateState::Failed { reason: format!("读取下载文件失败: {e}") });
+        fail(app, "读取下载文件", format!("读取下载文件失败: {e}"));
         return;
     }
     let digest = match sha256_stream(&mut file) {
@@ -379,30 +472,37 @@ fn apply_inner(app: &AppHandle) {
         Err(e) => {
             drop(file);
             let _ = std::fs::remove_file(&new_exe);
-            set_state(app, UpdateState::Failed { reason: format!("读取下载文件失败: {e}") });
+            fail(app, "校验下载内容", format!("读取下载文件失败: {e}"));
             return;
         }
     };
     drop(file);
     if !digest.eq_ignore_ascii_case(&manifest.exe_sha256) {
         let _ = std::fs::remove_file(&new_exe);
-        set_state(app, UpdateState::Failed {
-            reason: "下载内容校验不通过,已删除临时文件".into(),
-        });
+        // 期望/实际哈希并列给出:可对照 CI latest.json 判断是清单错还是传输损坏。
+        fail(
+            app,
+            "校验",
+            format!(
+                "下载内容校验不通过:期望 SHA-256 {},实际 {},已删除临时文件",
+                manifest.exe_sha256.to_lowercase(),
+                digest
+            ),
+        );
         return;
     }
     let script = build_helper_script(&exe, &new_exe, std::process::id());
-    let spawned = std::process::Command::new("powershell")
+    if let Err(e) = std::process::Command::new("powershell")
         .arg("-NoProfile")
         .arg("-NonInteractive")
         .arg("-WindowStyle")
         .arg("Hidden")
         .arg("-Command")
         .arg(script)
-        .spawn();
-    if spawned.is_err() {
+        .spawn()
+    {
         let _ = std::fs::remove_file(&new_exe);
-        set_state(app, UpdateState::Failed { reason: "启动更新助手失败".into() });
+        fail(app, "启动更新助手", format!("启动更新助手失败: {e}"));
         return;
     }
     // helper 已分离,等待本进程退出后移动并重启旧 exe 文件;此处走现有唯一退出路径
@@ -424,17 +524,29 @@ fn download_exe(
         .map_err(|e| format!("构造下载客户端失败: {e}"))?
         .get(&manifest.exe_url)
         .send()
-        .map_err(|e| format!("下载失败: {e}"))?;
+        .map_err(|e| format!("下载请求失败{}: {e}", net_hint(&e)))?;
+    let status = resp.status();
+    if !status.is_success() {
+        // 与清单请求同理:非 2xx 显式报状态码,否则后续读流只会得到难定位的截断错误。
+        return Err(format!(
+            "下载请求返回异常状态码: HTTP {status} ({})",
+            manifest.exe_url
+        ));
+    }
     let total = resp.content_length().unwrap_or(0);
     let mut buf = [0u8; 64 * 1024];
     let mut written: u64 = 0;
     let mut last_pct: Option<u8> = None;
     loop {
-        let n = resp.read(&mut buf).map_err(|e| format!("下载中断: {e}"))?;
+        let n = resp
+            .read(&mut buf)
+            .map_err(|e| format!("下载中断(已完成 {written}/{total} 字节): {e}"))?;
         if n == 0 {
             break;
         }
-        target.write_all(&buf[..n]).map_err(|e| format!("写入临时文件失败: {e}"))?;
+        target
+            .write_all(&buf[..n])
+            .map_err(|e| format!("写入临时文件失败(已完成 {written}/{total} 字节): {e}"))?;
         written += n as u64;
         // 仅在百分比变化时广播:避免每个 64KB 块都触发事件 + 托盘菜单 Win32 变更。
         if total > 0 {
@@ -632,6 +744,27 @@ mod tests {
         assert!(!tray_update_enabled(&UpdateState::Idle));
         assert!(!tray_update_enabled(&UpdateState::Downloading { progress: 10 }));
         assert!(!tray_update_enabled(&UpdateState::DevBuild));
+        // Failed 可点击:托盘直达设置页查看具体原因(本需求的排查入口)。
+        assert!(tray_update_enabled(&UpdateState::Failed { reason: "x".into() }));
+    }
+
+    #[test]
+    fn update_log_path_joins_appdata_herbie() {
+        let p = update_log_path(r"C:\Users\air\AppData\Roaming");
+        assert_eq!(
+            p,
+            std::path::PathBuf::from(r"C:\Users\air\AppData\Roaming")
+                .join("herbie")
+                .join("update.log")
+        );
+    }
+
+    #[test]
+    fn log_line_carries_ts_stage_and_message() {
+        assert_eq!(
+            format_log_line("2026-08-26 10:00:00", "下载", "网络请求失败"),
+            "2026-08-26 10:00:00 [下载] 网络请求失败"
+        );
     }
 
     #[test]
@@ -728,7 +861,12 @@ mod tests {
         assert_eq!(actual, expected, "UpdateVersion 与夹具不一致");
 
         let keys = fx["settingsKeys"].as_array().unwrap();
-        for k in [KEY_AUTO_UPDATE_CHECK, KEY_NOTIFIED_SHA, KEY_LAST_CHECK] {
+        for k in [
+            KEY_AUTO_UPDATE_CHECK,
+            KEY_NOTIFIED_SHA,
+            KEY_LAST_CHECK,
+            KEY_LAST_ERROR,
+        ] {
             assert!(
                 keys.iter().any(|v| v.as_str() == Some(k)),
                 "settings 键 {k} 不在夹具 settingsKeys 中"

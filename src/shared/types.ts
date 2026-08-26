@@ -39,13 +39,19 @@ export interface Settings {
   mainShortcutError?: string | null
   autostart: string
   autoUpdateCheck: string
+  lastUpdateError?: string | null
 }
 
 export type SettingsKey = keyof Settings
 
 // 更新子系统 settings 键名(与 Rust `settings::KEY_*` 保持一致;对拍锚点:
 // `tests/fixtures/update-state.json` 的 `settingsKeys` + cargo `serialized_ipc_shapes_match_shared_fixture`)。
-export const UPDATE_SETTINGS_KEYS = ['autoUpdateCheck', 'updateNotifiedSha', 'lastUpdateCheck'] as const
+export const UPDATE_SETTINGS_KEYS = [
+  'autoUpdateCheck',
+  'updateNotifiedSha',
+  'lastUpdateCheck',
+  'lastUpdateError',
+] as const
 
 export interface ExportResult {
   ok: boolean

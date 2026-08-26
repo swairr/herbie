@@ -23,6 +23,9 @@ pub const KEY_AUTOSTART: &str = "autostart";
 pub const KEY_AUTO_UPDATE_CHECK: &str = "autoUpdateCheck";
 pub const KEY_NOTIFIED_SHA: &str = "updateNotifiedSha";
 pub const KEY_LAST_CHECK: &str = "lastUpdateCheck";
+/// 上次更新失败的简述(`[本地时间] 原因`,update.rs 写入,设置页只读展示);成功检查后清空。
+/// 使自动检查失败也跨重启可见——排查入口不依赖状态机重启清零。
+pub const KEY_LAST_ERROR: &str = "lastUpdateError";
 
 /// 默认值表(对齐 TS `DEFAULTS`。TS 中 `shortcutError: null`,`getDefault` 把 null/undefined
 /// 归一为空串;此处直接给空串)。

@@ -20,6 +20,9 @@ const autoUpdateCheck = ref(true)
 const autoUpdateError = ref<string | null>(null)
 const updateState = ref<UpdateState>({ kind: 'idle' })
 const updateVersion = ref<UpdateVersion>({ sha: null, devBuild: true, lastCheck: null })
+// 检查/更新触发层的同步错误(如「正在下载更新」守卫)与上一次失败的持久化记录。
+const applyError = ref<string | null>(null)
+const lastUpdateError = ref<string | null>(null)
 
 let detachStatus: (() => void) | undefined
 
@@ -34,6 +37,7 @@ async function load(): Promise<void> {
   mainShortcutError.value = (all.mainShortcutError as string) || null
   autostart.value = all.autostart === 'true'
   autoUpdateCheck.value = (all.autoUpdateCheck as string) !== 'false'
+  lastUpdateError.value = (all.lastUpdateError as string) || null
 }
 
 async function onToggleAutostart(): Promise<void> {
@@ -62,14 +66,23 @@ async function refreshUpdate(): Promise<void> {
 }
 
 async function onCheckUpdate(): Promise<void> {
-  await window.api.update.check()
-  await refreshUpdate()
+  try {
+    await window.api.update.check()
+    applyError.value = null
+    await refreshUpdate()
+  } catch (e) {
+    applyError.value = String(e)
+  }
 }
 
 function onApplyUpdate(): void {
   const ok = window.confirm('将下载并替换为最新 nightly 版本,随后自动重启应用。当前活动记录会与托盘退出一致地正常收尾。')
   if (!ok) return
-  void window.api.update.apply()
+  // 同步守卫类错误(如重复点击「正在下载更新,请稍候」)必须可见,不能被 void 吞掉。
+  window.api.update
+    .apply()
+    .then(() => (applyError.value = null))
+    .catch((e: unknown) => (applyError.value = String(e)))
 }
 
 async function saveAll(): Promise<void> {
@@ -120,6 +133,15 @@ onMounted(() => {
   load()
   detachStatus = window.api.update.onStatus((s) => {
     updateState.value = s
+    if (s.kind === 'failed') {
+      // 失败原因带时间戳持久化在 settings,事件到达时重读一次拿到最新记录。
+      void window.api.settings
+        .getAll()
+        .then((all) => (lastUpdateError.value = (all.lastUpdateError as string) || null))
+    } else {
+      applyError.value = null
+      if (s.kind !== 'idle') lastUpdateError.value = null
+    }
   })
   void refreshUpdate()
   window.addEventListener('keydown', onCaptureKeydown, true)
@@ -216,6 +238,13 @@ onBeforeUnmount(() => {
         <em class="hint">开发模式（本地构建）不参与更新</em>
       </div>
       <p v-if="updateState.kind === 'failed'" class="error">{{ updateState.reason }}</p>
+      <em v-if="updateState.kind === 'failed'" class="hint">
+        详细排查日志：%APPDATA%\herbie\update.log
+      </em>
+      <p v-if="applyError" class="error">{{ applyError }}</p>
+      <p v-else-if="lastUpdateError && updateState.kind !== 'failed'" class="error">
+        上次更新问题：{{ lastUpdateError }}
+      </p>
       <div v-else-if="updateState.kind === 'available'" class="field">
         <div class="update-line">
           <span>新版本构建于 {{ updateState.builtAt }}</span>
