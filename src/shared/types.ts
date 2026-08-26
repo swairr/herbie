@@ -39,6 +39,8 @@ export interface Settings {
   mainShortcutError?: string | null
   autostart: string
   autoUpdateCheck: string
+  // 更新时绕过证书校验("true" 绕过,默认校验);与 Rust `settings::KEY_UPDATE_SKIP_CERT_CHECK` 对齐。
+  updateSkipCertCheck: string
   lastUpdateError?: string | null
 }
 
@@ -48,6 +50,7 @@ export type SettingsKey = keyof Settings
 // `tests/fixtures/update-state.json` 的 `settingsKeys` + cargo `serialized_ipc_shapes_match_shared_fixture`)。
 export const UPDATE_SETTINGS_KEYS = [
   'autoUpdateCheck',
+  'updateSkipCertCheck',
   'updateNotifiedSha',
   'lastUpdateCheck',
   'lastUpdateError',

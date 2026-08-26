@@ -9,5 +9,5 @@
     "failed": "{\"kind\":\"failed\",\"reason\":\"网络错误\"}"
   },
   "version": "{\"sha\":\"abc123\",\"devBuild\":false,\"lastCheck\":\"2026-08-25T03:00:00.000Z\"}",
-  "settingsKeys": ["autoUpdateCheck", "updateNotifiedSha", "lastUpdateCheck", "lastUpdateError"]
+  "settingsKeys": ["autoUpdateCheck", "updateSkipCertCheck", "updateNotifiedSha", "lastUpdateCheck", "lastUpdateError"]
 }

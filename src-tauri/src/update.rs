@@ -39,10 +39,11 @@ pub fn build_sha() -> Option<&'static str> {
 }
 
 /// settings 键统一定义在 `settings.rs`(单源,含默认值表与 props 对拍锚点),此处仅引用:
-/// `autoUpdateCheck` 由 renderer 设置页开关读写;`updateNotifiedSha` / `lastUpdateCheck`
-/// 由本模块自用,默认空串。
+/// `autoUpdateCheck` / `updateSkipCertCheck` 由 renderer 设置页开关读写;
+/// `updateNotifiedSha` / `lastUpdateCheck` 由本模块自用,默认空串。
 pub(crate) use crate::settings::{
     KEY_AUTO_UPDATE_CHECK, KEY_LAST_CHECK, KEY_LAST_ERROR, KEY_NOTIFIED_SHA,
+    KEY_UPDATE_SKIP_CERT_CHECK,
 };
 
 /// nightly release 附带的 `latest.json`,与 CI `nightly.yml` 生成格式对齐(camelCase)。
@@ -257,6 +258,7 @@ fn net_hint(e: &reqwest::Error) -> &'static str {
 fn fetch_manifest() -> Result<UpdateManifest, String> {
     let resp = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
+        .danger_accept_invalid_certs(cert_check_bypassed())
         .build()
         .map_err(|e| format!("构造请求客户端失败: {e}"))?
         .get(manifest_url())
@@ -283,6 +285,14 @@ fn fetch_manifest() -> Result<UpdateManifest, String> {
 
 fn auto_update_enabled() -> bool {
     GlobalConn.lock_conn(|conn| settings::get_with_default(conn, KEY_AUTO_UPDATE_CHECK)) == "true"
+}
+
+/// 是否绕过证书校验:仅当设置页开关落为 "true"(即用户显式关闭校验)时返回 true;
+/// 未设置/默认 "false" 时保持校验。reqwest 以 `danger_accept_invalid_certs` 关闭
+/// 根证书链验证,供自签名证书 / 内网代理场景使用,默认安全取向不变。
+fn cert_check_bypassed() -> bool {
+    GlobalConn.lock_conn(|conn| settings::get_with_default(conn, KEY_UPDATE_SKIP_CERT_CHECK))
+        == "true"
 }
 
 /// 通知去重:新 sha 且不等于 `updateNotifiedSha` 才 toast 一次并落 key,避免每日自动
@@ -520,6 +530,7 @@ fn download_exe(
     use std::io::{Read, Write};
     let mut resp = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(300))
+        .danger_accept_invalid_certs(cert_check_bypassed())
         .build()
         .map_err(|e| format!("构造下载客户端失败: {e}"))?
         .get(&manifest.exe_url)
@@ -863,6 +874,7 @@ mod tests {
         let keys = fx["settingsKeys"].as_array().unwrap();
         for k in [
             KEY_AUTO_UPDATE_CHECK,
+            KEY_UPDATE_SKIP_CERT_CHECK,
             KEY_NOTIFIED_SHA,
             KEY_LAST_CHECK,
             KEY_LAST_ERROR,

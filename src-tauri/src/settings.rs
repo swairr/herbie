@@ -21,6 +21,7 @@ pub const KEY_AUTOSTART: &str = "autostart";
 /// 更新子系统键(单源;`update.rs` 经 `use crate::settings::*` 引用,renderer 侧键名由
 /// `tests/fixtures/update-state.json` 的 `settingsKeys` 与 TS `UPDATE_SETTINGS_KEYS` 对拍)。
 pub const KEY_AUTO_UPDATE_CHECK: &str = "autoUpdateCheck";
+pub const KEY_UPDATE_SKIP_CERT_CHECK: &str = "updateSkipCertCheck";
 pub const KEY_NOTIFIED_SHA: &str = "updateNotifiedSha";
 pub const KEY_LAST_CHECK: &str = "lastUpdateCheck";
 /// 上次更新失败的简述(`[本地时间] 原因`,update.rs 写入,设置页只读展示);成功检查后清空。
@@ -30,10 +31,10 @@ pub const KEY_LAST_ERROR: &str = "lastUpdateError";
 /// 默认值表(对齐 TS `DEFAULTS`。TS 中 `shortcutError: null`,`getDefault` 把 null/undefined
 /// 归一为空串;此处直接给空串)。
 fn default_for(key: &str) -> String {
-    if key == KEY_AUTO_UPDATE_CHECK {
-        return "true".to_string();
-    }
     match key {
+        KEY_AUTO_UPDATE_CHECK => "true".to_string(),
+        // 证书校验默认开启(仅设为 "true" 才绕过),避免默认行为变不安全。
+        KEY_UPDATE_SKIP_CERT_CHECK => "false".to_string(),
         "shortcut" => "Ctrl+Shift+Space".to_string(),
         "mainShortcut" => "Ctrl+Shift+M".to_string(),
         "exportDir" => String::new(),

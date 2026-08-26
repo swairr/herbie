@@ -17,7 +17,9 @@ const saved = ref(false)
 const capturing = ref<'shortcut' | 'mainShortcut' | null>(null)
 
 const autoUpdateCheck = ref(true)
+const updateSkipCertCheck = ref(false)
 const autoUpdateError = ref<string | null>(null)
+const updateSkipCertError = ref<string | null>(null)
 const updateState = ref<UpdateState>({ kind: 'idle' })
 const updateVersion = ref<UpdateVersion>({ sha: null, devBuild: true, lastCheck: null })
 // 检查/更新触发层的同步错误(如「正在下载更新」守卫)与上一次失败的持久化记录。
@@ -37,6 +39,7 @@ async function load(): Promise<void> {
   mainShortcutError.value = (all.mainShortcutError as string) || null
   autostart.value = all.autostart === 'true'
   autoUpdateCheck.value = (all.autoUpdateCheck as string) !== 'false'
+  updateSkipCertCheck.value = (all.updateSkipCertCheck as string) === 'true'
   lastUpdateError.value = (all.lastUpdateError as string) || null
 }
 
@@ -57,6 +60,16 @@ async function onToggleAutoUpdate(): Promise<void> {
   } catch (e) {
     autoUpdateCheck.value = !autoUpdateCheck.value
     autoUpdateError.value = String(e)
+  }
+}
+
+async function onToggleUpdateSkipCert(): Promise<void> {
+  try {
+    await window.api.settings.set('updateSkipCertCheck', updateSkipCertCheck.value ? 'true' : 'false')
+    updateSkipCertError.value = null
+  } catch (e) {
+    updateSkipCertCheck.value = !updateSkipCertCheck.value
+    updateSkipCertError.value = String(e)
   }
 }
 
@@ -227,6 +240,15 @@ onBeforeUnmount(() => {
         <em class="hint">启动后每 24 小时自动检查 nightly 更新，新版本仅经托盘提示</em>
       </label>
       <p v-if="autoUpdateError" class="error">{{ autoUpdateError }}</p>
+
+      <label class="field">
+        <div class="check-row">
+          <input type="checkbox" v-model="updateSkipCertCheck" @change="onToggleUpdateSkipCert" />
+          <span>绕过证书校验</span>
+        </div>
+        <em class="hint">默认校验更新服务器证书；仅在自签名证书 / 内网代理场景下开启，存在安全风险</em>
+      </label>
+      <p v-if="updateSkipCertError" class="error">{{ updateSkipCertError }}</p>
 
       <h2 class="section-title">更新</h2>
       <div class="field">
