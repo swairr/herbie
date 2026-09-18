@@ -84,6 +84,13 @@ export interface OffWorkState {
   offWork: boolean
 }
 
+// 追踪能力状态(与 Rust `platform::TrackingStatus` 对齐):Linux 下 available=false +
+// 原因(ADR 0004),UI 以 Tracking Unavailable 显式呈现(横幅 / 托盘 / 设置页)。
+export interface TrackingStatus {
+  available: boolean
+  reason: string | null
+}
+
 // 与 Rust `update::UpdateState` 对齐(tagged enum,serde tag="kind" + camelCase)。
 export type UpdateState =
   | { kind: 'idle' }
@@ -166,6 +173,7 @@ export interface Api {
   tracker: {
     getOffWork: () => Promise<OffWorkState>
     setOffWork: (on: boolean) => Promise<OffWorkState>
+    getStatus: () => Promise<TrackingStatus>
   }
   shell: {
     openExternal: (url: string) => Promise<void>

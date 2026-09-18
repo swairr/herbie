@@ -12,3 +12,9 @@ pub mod foreground;
 pub mod idle;
 #[cfg(windows)]
 pub mod power;
+
+/// 追踪能力状态:Windows 下原生能力齐备(前台钩子 / 空闲 / 电源),恒可用。
+/// 与 `crate::linux::tracking_unavailable_reason` 对称,由 `platform/` 门面转发。
+pub fn tracking_unavailable_reason() -> Option<&'static str> {
+    None
+}

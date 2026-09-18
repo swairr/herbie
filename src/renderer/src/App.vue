@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import type { TrackingStatus } from '@shared/types'
 import ListView from './views/ListView.vue'
 import TimeView from './views/TimeView.vue'
 import JournalView from './views/JournalView.vue'
@@ -7,6 +8,8 @@ import SettingsView from './views/SettingsView.vue'
 import QuickAddView from './views/QuickAddView.vue'
 
 const route = ref(getRoute())
+// Tracking Unavailable 状态(ADR 0004):不可用期间顶部横幅常驻不可关(Q17 决策)。
+const tracking = ref<TrackingStatus | null>(null)
 
 function getRoute(): string {
   const h = location.hash.replace(/^#\/?/, '')
@@ -17,6 +20,8 @@ onMounted(() => {
   window.addEventListener('hashchange', () => {
     route.value = getRoute()
   })
+  // 不可用与否在进程生命周期内是常驻事实,启动拉一次即可(动态探测留待未来实现追踪时)。
+  window.api.tracker.getStatus().then((s) => (tracking.value = s))
 })
 
 const showTabs = computed(() => route.value === 'main' || route.value === 'time' || route.value === 'journal')
@@ -37,6 +42,9 @@ function goTo(r: string): void {
 <template>
   <component v-if="route === 'quickadd'" :is="view" />
   <template v-else>
+    <div v-if="tracking && !tracking.available" class="tracking-banner">
+      活动记录不可用：{{ tracking.reason }}
+    </div>
     <nav v-if="showTabs" class="tabs">
       <button :class="{ active: route === 'main' }" @click="goTo('main')">待办</button>
       <button :class="{ active: route === 'time' }" @click="goTo('time')">时间</button>
@@ -47,6 +55,14 @@ function goTo(r: string): void {
 </template>
 
 <style scoped>
+.tracking-banner {
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 12px;
+  text-align: center;
+}
 .tabs {
   display: flex;
   gap: 4px;

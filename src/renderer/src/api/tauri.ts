@@ -32,6 +32,7 @@ import type {
   Settings,
   TimeExportResult,
   Todo,
+  TrackingStatus,
   UpdateState,
   UpdateVersion
 } from '@shared/types'
@@ -151,7 +152,8 @@ export function createTauriApi(): Api {
     },
     tracker: {
       getOffWork: () => invoke<OffWorkState>('tracker_get_off_work'),
-      setOffWork: (on) => invoke<OffWorkState>('tracker_set_off_work', { on })
+      setOffWork: (on) => invoke<OffWorkState>('tracker_set_off_work', { on }),
+      getStatus: () => invoke<TrackingStatus>('tracking_status')
     },
     shell: {
       openExternal: (url) => invoke<void>('shell_open_external', { url })

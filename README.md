@@ -4,17 +4,32 @@ H.E.R.B.I.E 是用于待办跟踪、任务安排、时间记录、日志手账�
 
 ## 框架与基础架构
 
-- 基于 Tauri v2 + Rust + Vue 3 开发，Windows 平台
-- 数据存于本地 SQLite（`%APPDATA%/herbie/herbie.db`），WAL + 外键，SQL 迁移体系管理 schema
+- 基于 Tauri v2 + Rust + Vue 3 开发，支持 Windows 与 Linux（X11）
+- 数据存于本地 SQLite（Windows：`%APPDATA%/herbie/herbie.db`；Linux：`$XDG_DATA_HOME/herbie/herbie.db`，默认 `~/.local/share/herbie/`），WAL + 外键，SQL 迁移体系管理 schema
 - 驻留托盘：关闭窗口后停留在托盘，仅通过托盘菜单退出
 - 全局快捷键唤醒 Quick Add 小窗口（默认 `Ctrl+Shift+Space`，可配置）
 - 全局快捷键唤醒主窗口（默认 `Ctrl+Shift+M`，可配置）
 - 设置页：导出目录、快捷键、空闲阈值、片段防抖时长等可配置
-- 自动更新：nightly 通道自动检查（启动 30s 后 + 每 24h，可关闭），绿色版 exe 自替换重启
-- 更新失败排查：失败原因携带 HTTP 状态码 / 哈希对比等技术细节，托盘「更新失败」可点击直达设置页；全部失败记录落盘 `%APPDATA%/herbie/update.log`
-- CI：Rust 单测 + 跨语言夹具对拍 + 绿色版 exe 发布流程
+- 自动更新（Windows）：nightly 通道自动检查（启动 30s 后 + 每 24h，可关闭），绿色版 exe 自替换重启；Linux 保留检查、不支持自替换（提示手动下载）
+- 更新失败排查（Windows）：失败原因携带 HTTP 状态码 / 哈希对比等技术细节，托盘「更新失败」可点击直达设置页；全部失败记录落盘 `%APPDATA%/herbie/update.log`
+- CI：Rust 单测 + 跨语言夹具对拍 + Windows / Linux 绿色版发布流程
 
 > 旧版 nightly 用户需手动下载一次带更新器的 nightly 版本完成引导，此后检查与更新全自动。
+
+## Linux 绿色版安装
+
+从 CI / nightly 产物下载 `Herbie-linux-x64.tar.gz`（或 `Herbie-nightly-linux-x64.tar.gz`）后：
+
+```bash
+tar xzf Herbie-linux-x64.tar.gz
+./herbie/herbie
+```
+
+桌面集成（可选）：把 `herbie/herbie` 放入 PATH（如 `~/.local/bin`），`herbie.desktop` 复制到
+`~/.local/share/applications/`，`herbie.png` 复制到 `~/.local/share/icons/hicolor/128x128/apps/`。
+
+运行依赖（Debian/Ubuntu）：`libwebkit2gtk-4.1-0`、`libayatana-appindicator3-1`、`librsvg2-2`
+（多数桌面环境已预装）。数据与默认导出目录位于 `~/.local/share/herbie/`。
 
 使用命令：
 
@@ -39,6 +54,8 @@ H.E.R.B.I.E 是用于待办跟踪、任务安排、时间记录、日志手账�
 - [ ] 定期自动备份数据库（周期可配）
 
 ## 时间记录
+
+> Windows 实现；Linux 下追踪整体不可用（界面显式提示，见 `docs/adr/0004-linux-tracking-unavailable.md`）
 
 - [x] 自动采集前台程序/窗口（`SetWinEventHook`），记录活动片段
 - [x] 空闲检测（`GetLastInputInfo`）与睡眠/唤醒/锁屏事件，空闲记为 Idle 片段

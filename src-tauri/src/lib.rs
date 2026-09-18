@@ -6,7 +6,10 @@ mod hook;
 mod journal;
 mod labels;
 mod labels_store;
+#[cfg(target_os = "linux")]
+mod linux;
 mod migrations;
+mod platform;
 mod segment;
 mod settings;
 mod shell;
@@ -27,9 +30,8 @@ use journal::{JournalEntry, JournalInput, JournalPatch};
 use export::ExportDayData;
 use todos::{LabelCount, Todo, TodoFilter, TodoInput, TodoPatch};
 use tauri::Emitter;
+use platform::ForegroundHook;
 use tracker::{GatedNotifier, GlobalConn, OffWorkState, ProdDeps, Tracker};
-#[cfg(windows)]
-use win::foreground::ForegroundHook;
 
 // 进程级共享 tracker(对齐 TS `setTrackerInstance`/`getTracker` 的持有人)。命令经此取实例,
 // 不必在注册处逐个透传。3c-B 接真实前台钩子/idle/电源后,Tracker 仍由同一 Arc 持有。
@@ -37,25 +39,26 @@ static TRACKER: OnceLock<Arc<Tracker>> = OnceLock::new();
 
 // 3c-B 生产接线的生命周期 guard:`start_tracking_system` 幂等;`stop_tracking_system`
 // 供切片6 外壳退出时调用,当前先 join 轮询线程 + 拆前台钩子,电源线程为守护常驻
-// (优雅停完善留切片7,见 `stop_tracking_system` 注释)。
-#[cfg(windows)]
+// (优雅停完善留切片7,见 `stop_tracking_system` 注释)。平台能力由 `platform/` 门面判定。
 static TRACKING_STARTED: AtomicBool = AtomicBool::new(false);
-#[cfg(windows)]
 static POLL_STOP: AtomicBool = AtomicBool::new(false);
-#[cfg(windows)]
 static POLL_THREAD: Mutex<Option<thread::JoinHandle<()>>> = Mutex::new(None);
-#[cfg(windows)]
 static FOREGROUND_HOOK: Mutex<Option<GatedNotifier<ForegroundHook>>> = Mutex::new(None);
 
-/// 生产接线(3c-B,仅 Windows,本机运行即真实前台钩子/空闲/电源):
+/// 生产接线(平台具备追踪能力时,本机运行即真实前台钩子/空闲/电源):
 /// 1) 前台钩子:`gate_notifier` 把 off-work 期间的每条事件先提升为返岗信号,
 ///    `start_tracking` 再写段开关;handle 存起来供 stop 拆除。
 /// 2) idle 轮询线程:对应 TS `setInterval(poll, 20s)`(先睡再 poll,首次在启动 20s 后)。
 /// 3) 电源/锁屏:`start_power_watcher` 映射为 `PowerEvent` 驱动 `on_power`。
 /// 锁顺序全程「先 tracker 后 db」:钩子/轮询回调内先锁 tracker state,再经 ConnAccess
 /// 锁 DB;此处不引入与 tracker 反向的锁序。
-#[cfg(windows)]
+///
+/// 平台守卫:Linux 追踪整体未实现(ADR 0004),直接返回 —— 不置启动标志、不接线任何
+/// 原生能力;UI 以 Tracking Unavailable 显式呈现,`stop_tracking_system` 亦为 no-op。
 pub fn start_tracking_system(_app: &tauri::AppHandle) {
+    if platform::tracking_unavailable_reason().is_some() {
+        return;
+    }
     if TRACKING_STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -89,15 +92,14 @@ pub fn start_tracking_system(_app: &tauri::AppHandle) {
     *POLL_THREAD.lock().expect("poll mutex poisoned") = Some(poll_thread);
 
     let tracker_for_power = t.clone();
-    win::power::start_power_watcher(Box::new(move |e| {
+    platform::start_power_watcher(Box::new(move |e| {
         tracker_for_power.on_power(&GlobalConn, &mut ProdDeps, e);
     }));
 }
 
 /// 停止追踪系统:先停轮询(poll 可能持有 tracker state / DB 写路径),再关开放段并停
 /// 前台钩子。电源线程为守护常驻,进程退出即回收;若需优雅停止,切片7 再补停句柄。
-/// 切片6 外壳在退出前调用。
-#[cfg(windows)]
+/// 切片6 外壳在退出前调用。Linux 下未启动(见 `start_tracking_system` 平台守卫),no-op。
 pub fn stop_tracking_system() {
     if !TRACKING_STARTED.load(Ordering::SeqCst) {
         return;
@@ -285,6 +287,13 @@ fn export_pull_day(day: String) -> Result<ExportDayData, String> {
     })
 }
 
+/// 追踪能力状态(Tracking Unavailable 的取数口:主窗口横幅 / 设置页状态行)。
+/// Linux 下 `available=false` + 原因(ADR 0004);Windows 恒可用。
+#[tauri::command]
+fn tracking_status() -> Result<platform::TrackingStatus, String> {
+    Ok(platform::tracking_status())
+}
+
 #[tauri::command]
 fn tracker_get_off_work() -> Result<OffWorkState, String> {
     Ok(OffWorkState {
@@ -368,7 +377,8 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
-            // 沿用旧 Electron 数据路径 `%APPDATA%/herbie/herbie.db`(数据零迁移,见 db.rs)。
+            // 数据路径平台化(Windows 沿用旧 Electron 路径 `%APPDATA%/herbie/herbie.db`,
+            // 零迁移;Linux XDG 目录 —— 见 db.rs)。
             // 打开/迁移失败不得静默 abort:弹原生错误框说明路径与原因后退出(而非 panic=abort 硬终止)。
             if let Err(e) = db::open_file(db::default_db_path()) {
                 eprintln!("[db] 无法打开数据库: {e}");
@@ -387,8 +397,7 @@ pub fn run() {
             }
 
             // 3c-B 生产接线:TRACKER 已在上面提前 set,setup 内即可启动前台钩子/
-            // idle 轮询/电源事件(本机 Windows 运行即真实生效)。
-            #[cfg(windows)]
+            // idle 轮询/电源事件(平台具备追踪能力时生效;Linux 为 no-op,ADR 0004)。
             start_tracking_system(&app.handle());
 
             // 切片6 外壳:主窗口托盘驻留 + Quick Add 窗口 + 托盘 + 全局快捷键。
@@ -430,6 +439,7 @@ pub fn run() {
             export_write_file,
             export_default_dir,
             export_pull_day,
+            tracking_status,
             tracker_get_off_work,
             tracker_set_off_work,
             shell_open_external,
@@ -453,7 +463,6 @@ pub fn run() {
             // 自动隐藏;退出时 WebView2 的 `Chrome_WidgetWin_0` 类注销 1412 日志是上游
             // 无害错误(tauri #7606 upsteam),不影响退出码。
             shell::QUITTING.store(true, std::sync::atomic::Ordering::SeqCst);
-            #[cfg(windows)]
             stop_tracking_system();
             update::stop_update_check_system();
             shell::unregister_main_shortcut(app);

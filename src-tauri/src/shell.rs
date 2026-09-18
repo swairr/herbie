@@ -67,12 +67,29 @@ static QUICK_ADD_SHOW_PENDING: AtomicBool = AtomicBool::new(false);
 // 纯函数(供托盘 label 与快捷键错误消息复用,可单测)
 // ---------------------------------------------------------------------------
 
-/// 托盘「下班 / 恢复记录」菜单 label,依 off-work 状态切换。
-pub fn off_work_label(off_work: bool) -> &'static str {
-    if off_work {
+/// 托盘「下班 / 恢复记录」菜单 label:追踪不可用时以 label 本身表达(菜单项无 tooltip),
+/// 否则依 off-work 状态切换。
+pub fn off_work_label(off_work: bool, tracking_unavailable: bool) -> &'static str {
+    if tracking_unavailable {
+        "活动记录不可用"
+    } else if off_work {
         "恢复记录"
     } else {
         "下班 / 停止记录"
+    }
+}
+
+/// 托盘「下班 / 恢复记录」是否可点:追踪不可用时禁用置灰(ADR 0004)。
+pub fn off_work_item_enabled(tracking_unavailable: bool) -> bool {
+    !tracking_unavailable
+}
+
+/// 托盘 tooltip:追踪不可用时附加常驻说明(窗口关闭后仍可见的提示位)。
+pub fn tray_tooltip(tracking_unavailable: bool) -> &'static str {
+    if tracking_unavailable {
+        "Herbie — 活动记录不可用"
+    } else {
+        "Herbie"
     }
 }
 
@@ -240,7 +257,7 @@ pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
         .expect("bundle icon not embedded");
     let tray = TrayIconBuilder::new()
         .icon(icon)
-        .tooltip("Herbie")
+        .tooltip(tray_tooltip(crate::platform::tracking_unavailable_reason().is_some()))
         // 左键显示主窗口(对齐 Electron `tray.on('click')`),右键弹菜单。
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
@@ -255,6 +272,10 @@ pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
         })
         .on_menu_event(|app, event| {
             if event.id() == TRAY_TOGGLE_ID {
+                // 追踪不可用时菜单项已禁用(此处防御性早退,理论上不可达)。
+                if crate::platform::tracking_unavailable_reason().is_some() {
+                    return;
+                }
                 // 下班 ↔ 恢复:切换后原地更新菜单 label。
                 if let Some(t) = TRACKER.get() {
                     let on = !t.get_off_work();
@@ -279,16 +300,24 @@ pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
     refresh_tray_menu(app)
 }
 
-/// 刷新托盘「下班 / 恢复记录」label:已建菜单则 `set_text` 原地更新(避免菜单事件
-/// 回调内重建菜单的已知 panic 模式);尚未建菜单时兜底重建。
+/// 刷新托盘「下班 / 恢复记录」label 与可用态:已建菜单则 `set_text` / `set_enabled` 原地
+/// 更新(避免菜单事件回调内重建菜单的已知 panic 模式);尚未建菜单时兜底重建。
 pub fn refresh_tray_menu(app: &AppHandle) -> tauri::Result<()> {
     let off_work = TRACKER.get().map(|t| t.get_off_work()).unwrap_or(false);
+    let unavailable = crate::platform::tracking_unavailable_reason().is_some();
     if let Some(item) = TRAY_TOGGLE_ITEM.lock().expect("tray toggle mutex poisoned").as_ref() {
-        return item.set_text(off_work_label(off_work));
+        item.set_text(off_work_label(off_work, unavailable))?;
+        return item.set_enabled(off_work_item_enabled(unavailable));
     }
     // 全功能托盘(切片6):[下班切换] --- [更新项] [显示主窗口] [退出]。
     let update_state = crate::update::get_state();
-    let toggle = MenuItem::with_id(app, TRAY_TOGGLE_ID, off_work_label(off_work), true, None::<&str>)?;
+    let toggle = MenuItem::with_id(
+        app,
+        TRAY_TOGGLE_ID,
+        off_work_label(off_work, unavailable),
+        off_work_item_enabled(unavailable),
+        None::<&str>,
+    )?;
     let update = MenuItem::with_id(
         app,
         TRAY_UPDATE_ID,
@@ -449,8 +478,19 @@ mod tests {
 
     #[test]
     fn off_work_label_toggles_with_state() {
-        assert_eq!(off_work_label(false), "下班 / 停止记录");
-        assert_eq!(off_work_label(true), "恢复记录");
+        assert_eq!(off_work_label(false, false), "下班 / 停止记录");
+        assert_eq!(off_work_label(true, false), "恢复记录");
+    }
+
+    #[test]
+    fn off_work_entry_disabled_when_tracking_unavailable() {
+        // 不可用态盖过 off-work 状态:label 与可点性都表达"不可用"。
+        assert_eq!(off_work_label(false, true), "活动记录不可用");
+        assert_eq!(off_work_label(true, true), "活动记录不可用");
+        assert!(!off_work_item_enabled(true));
+        assert!(off_work_item_enabled(false));
+        assert_eq!(tray_tooltip(true), "Herbie — 活动记录不可用");
+        assert_eq!(tray_tooltip(false), "Herbie");
     }
 
     #[test]

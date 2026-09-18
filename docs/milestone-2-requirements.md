@@ -2,9 +2,11 @@
 
 目标：记录每天把时间花在哪 —— 自动采集前台程序/窗口的活动片段，支持事后备注与归因到 Todo，日视图回顾，手动导出 markdown。
 
-平台：暂时只支持 Windows。领域术语见根目录 `CONTEXT.md`；架构决策见 `docs/adr/`。
+平台：Windows 完整支持；Linux 支持核心功能（Todo / Journal / 导出 / 托盘 / 快捷键），**追踪三件套整体不实现**，显式呈现为 Tracking Unavailable（见 ADR 0004）。领域术语见根目录 `CONTEXT.md`；架构决策见 `docs/adr/`。
 
 ## 1. 活动片段采集（事件驱动，见 ADR 0002）
+
+> 以下采集 / 空闲 / 下班行为在 Windows 通过 `src-tauri/src/win/` 原生模块实现；Linux 上追踪整体降级为 Tracking Unavailable（ADR 0004），核心功能不受影响。
 
 - 自写 N-API 原生模块注册 `SetWinEventHook`，监听两类事件：
   - 前台窗口切换（`EVENT_SYSTEM_FOREGROUND`）
@@ -52,6 +54,6 @@
 - 片段边界调整、拆分 / 合并（完整时间线编辑器）
 - 甘特式可视化时间条
 - 短片段的展示层折叠（原始数据全部保留，后续需要再加）
-- 非 Windows 平台
+- Linux 平台的时间记录（追踪三件套 —— 见 ADR 0004；未来实现时填充 `platform/linux/`，核心不动）
 - 相似待办查找、任务依赖、子任务拆解（里程碑四）
 - 计划时间、日历视图、番茄钟、报表、外部日历同步（里程碑五）

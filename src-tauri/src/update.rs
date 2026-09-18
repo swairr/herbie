@@ -6,12 +6,14 @@
 //! - 检查清单固定 `MANIFEST_URL`(nightly release 附带的 `latest.json`),sha 不等即视为
 //!   有更新(nightly 单向前进,只做不等比较足够)。
 //! - 状态变更统一走 `set_state`:`update://status` 事件 + 托盘菜单项原地刷新。
-//! - 排查设施:所有失败经 `fail`/`note_failure` 收敛——追写 `%APPDATA%/herbie/update.log`,
+//! - 排查设施:所有失败经 `fail`/`note_failure` 收敛——追写 `<数据根>/herbie/update.log`
+//!   (Windows `%APPDATA%/herbie`;Linux `$XDG_DATA_HOME/herbie`,与数据库同目录),
 //!   并把带本地时间戳的原因持久化到 settings `lastUpdateError`(设置页展示,成功后清空);
 //!   失败原因必须携带可定位的技术细节(HTTP 状态码 / 哈希对比 / 文件路径 / 响应预览)。
-//! - 替换流程:下载到 exe 同目录 `herbie_new.exe` → sha256 校验 → spawn 分离的 PowerShell
-//!   helper(等待旧进程退出 → 重试 Move → Start-Process)→ `app.exit(0)` 复用现有退出清理
-//!   路径(lib.rs RunEvent::ExitRequested:关开放段/拆钩子/反注册快捷键)。
+//! - 替换流程(仅 Windows):下载到 exe 同目录 `herbie_new.exe` → sha256 校验 → spawn 分离的
+//!   PowerShell helper(等待旧进程退出 → 重试 Move → Start-Process)→ `app.exit(0)` 复用现有
+//!   退出清理路径(lib.rs RunEvent::ExitRequested:关开放段/拆钩子/反注册快捷键)。
+//!   Linux `update_apply` 前置早退为「手动下载」提示(ADR 0004);检查链路平台无关、照常可用。
 //! - 线程模型对齐 idle poll(分片 1s 睡眠 + 全局停止标志 + JoinHandle 持有),见 lib.rs。
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -192,11 +194,9 @@ fn set_state(app: &AppHandle, state: UpdateState) {
 
 // ---- 排查设施:更新日志 + 失败记录 ----
 
-/// 更新日志文件路径:`%APPDATA%/herbie/update.log`(与数据库同目录,用户可直接打开)。
-pub fn update_log_path(appdata: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(appdata)
-        .join("herbie")
-        .join("update.log")
+/// 更新日志文件路径:`<herbie_dir>/update.log`(与数据库同目录,用户可直接打开)。
+pub fn update_log_path(herbie_dir: &std::path::Path) -> std::path::PathBuf {
+    herbie_dir.join("update.log")
 }
 
 /// 单行日志格式:`<本地时间> [<阶段>] <内容>`。
@@ -204,14 +204,11 @@ pub fn format_log_line(local_ts: &str, stage: &str, msg: &str) -> String {
     format!("{local_ts} [{stage}] {msg}")
 }
 
-/// 追加一行到更新日志(append 模式)。日志是排查辅助设施,任何写失败(APPDATA 缺失 /
+/// 追加一行到更新日志(append 模式)。日志是排查辅助设施,任何写失败(数据根缺失 /
 /// 目录不可写)都静默忽略,不得反噬更新主流程。时间戳用本机时区——排查场景以用户
 /// 看到的挂钟时间为准。
 pub fn append_log(stage: &str, msg: &str) {
-    let Ok(appdata) = std::env::var("APPDATA") else {
-        return;
-    };
-    let path = update_log_path(&appdata);
+    let path = update_log_path(&crate::db::herbie_dir());
     let Some(dir) = path.parent() else {
         return;
     };
@@ -391,8 +388,13 @@ pub fn update_get_version() -> Result<UpdateVersion, String> {
 }
 
 /// 应用更新:下载 → 校验 → spawn 分离 helper → `app.exit(0)` 复用退出清理路径。
+/// Linux 不支持自替换(ADR 0004):前置早退为手动下载提示。替换实现(`apply_inner` 等)
+/// 保留全平台编译以便单测;Linux 上由本守卫保证不可达。
 #[tauri::command]
 pub fn update_apply(app: AppHandle) -> Result<(), String> {
+    if !crate::platform::auto_update_supported() {
+        return Err("当前平台暂不支持自动更新，请手动下载新版本替换".into());
+    }
     match get_state() {
         UpdateState::DevBuild => return Err("当前为开发模式,不支持更新".into()),
         UpdateState::Available { .. } => {}
@@ -760,13 +762,11 @@ mod tests {
     }
 
     #[test]
-    fn update_log_path_joins_appdata_herbie() {
-        let p = update_log_path(r"C:\Users\air\AppData\Roaming");
+    fn update_log_path_lives_in_herbie_dir() {
+        let p = update_log_path(std::path::Path::new("/tmp/herbie-data"));
         assert_eq!(
             p,
-            std::path::PathBuf::from(r"C:\Users\air\AppData\Roaming")
-                .join("herbie")
-                .join("update.log")
+            std::path::PathBuf::from("/tmp/herbie-data").join("update.log")
         );
     }
 
@@ -780,8 +780,12 @@ mod tests {
 
     #[test]
     fn leftover_new_exe_path_computed_next_to_exe() {
-        let p = leftover_new_exe_path(&std::path::Path::new("C:\\Tools\\herbie.exe"));
-        assert_eq!(p, std::path::PathBuf::from("C:\\Tools\\herbie_new.exe"));
+        // 用 Path::join 构造输入:反斜杠字面量在非 Windows 平台的路径语义不同。
+        let exe = std::path::Path::new("tools").join("herbie.exe");
+        assert_eq!(
+            leftover_new_exe_path(&exe),
+            std::path::Path::new("tools").join("herbie_new.exe")
+        );
         let fallback = leftover_new_exe_path(std::path::Path::new("herbie.exe"));
         assert_eq!(fallback, std::path::PathBuf::from("herbie_new.exe"));
     }

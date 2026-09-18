@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import type { UpdateState, UpdateVersion } from '@shared/types'
+import type { TrackingStatus, UpdateState, UpdateVersion } from '@shared/types'
 import { UPDATE_SETTINGS_KEYS } from '@shared/types'
 import { captureAccelerator } from '../utils'
 
@@ -22,6 +22,8 @@ const autoUpdateError = ref<string | null>(null)
 const updateSkipCertError = ref<string | null>(null)
 const updateState = ref<UpdateState>({ kind: 'idle' })
 const updateVersion = ref<UpdateVersion>({ sha: null, devBuild: true, lastCheck: null })
+// 追踪能力状态(Tracking Unavailable 的设置页状态行,ADR 0004)。
+const tracking = ref<TrackingStatus | null>(null)
 // 检查/更新触发层的同步错误(如「正在下载更新」守卫)与上一次失败的持久化记录。
 const applyError = ref<string | null>(null)
 const lastUpdateError = ref<string | null>(null)
@@ -144,6 +146,7 @@ function onCaptureKeydown(e: KeyboardEvent): void {
 
 onMounted(() => {
   load()
+  void window.api.tracker.getStatus().then((s) => (tracking.value = s))
   detachStatus = window.api.update.onStatus((s) => {
     updateState.value = s
     if (s.kind === 'failed') {
@@ -250,6 +253,13 @@ onBeforeUnmount(() => {
       </label>
       <p v-if="updateSkipCertError" class="error">{{ updateSkipCertError }}</p>
 
+      <h2 class="section-title">活动记录</h2>
+      <div class="field">
+        <span>状态</span>
+        <span>{{ tracking?.available ? '正常记录' : '不可用' }}</span>
+        <em v-if="tracking && !tracking.available" class="hint">{{ tracking.reason }}</em>
+      </div>
+
       <h2 class="section-title">更新</h2>
       <div class="field">
         <span>当前版本</span>
@@ -261,7 +271,7 @@ onBeforeUnmount(() => {
       </div>
       <p v-if="updateState.kind === 'failed'" class="error">{{ updateState.reason }}</p>
       <em v-if="updateState.kind === 'failed'" class="hint">
-        详细排查日志：%APPDATA%\herbie\update.log
+        详细排查日志：应用数据目录下的 herbie/update.log
       </em>
       <p v-if="applyError" class="error">{{ applyError }}</p>
       <p v-else-if="lastUpdateError && updateState.kind !== 'failed'" class="error">

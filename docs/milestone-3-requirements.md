@@ -2,7 +2,7 @@
 
 目标：日志 / 手账 —— 记录会议纪要、每日思考等自由文本，按本地自然日组织，手动导出 markdown，供外部 AI 归纳总结。
 
-平台：Windows（同前）。领域术语见根目录 `CONTEXT.md`；架构决策见 `docs/adr/`。
+平台：Windows 与 Linux（本里程碑功能平台无关；追踪三件套 Windows-only，见 ADR 0004）。领域术语见根目录 `CONTEXT.md`；架构决策见 `docs/adr/`。
 
 ## 1. Journal Entry（日志条目）
 

@@ -1,0 +1,73 @@
+name: 'Build Linux portable'
+description: 'Shared Linux build steps: setup pnpm/Node, install Tauri system libs, cargo cache, (optional) cargo tests, tauri build (no bundle), package tar.gz with .desktop + icon'
+inputs:
+  tarball-name:
+    description: 'File name of the resulting tar.gz (created in workspace root)'
+    required: true
+  run-tests:
+    description: 'Run cargo tests before building'
+    type: boolean
+    default: false
+
+runs:
+  using: composite
+  steps:
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v6
+      with:
+        version: 9
+        run_install: false
+
+    - name: Setup Node
+      uses: actions/setup-node@v7
+      with:
+        node-version: '22'
+        cache: 'pnpm'
+
+    - name: Install Tauri system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+      shell: bash
+
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+      shell: bash
+
+    - name: Cache cargo (registry + target)
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: src-tauri
+        cache-on-failure: true
+
+    - name: Rust tests
+      if: ${{ inputs.run-tests }}
+      run: cargo test --manifest-path src-tauri/Cargo.toml
+      shell: bash
+
+    - name: Build (no bundle)
+      run: pnpm tauri build --no-bundle
+      shell: bash
+      env:
+        # 嵌入 commit SHA → 内嵌 `option_env!("HERBIE_NIGHTLY_SHA")`,客户端据此判断是否有更新。
+        HERBIE_NIGHTLY_SHA: ${{ github.sha }}
+
+    - name: Package tar.gz (binary + .desktop + icon)
+      run: |
+        set -euo pipefail
+        stage="$(mktemp -d)"
+        mkdir -p "$stage/herbie"
+        cp src-tauri/target/release/herbie "$stage/herbie/"
+        cp src-tauri/icons/128x128.png "$stage/herbie/herbie.png"
+        printf '%s\n' \
+          '[Desktop Entry]' \
+          'Type=Application' \
+          'Name=Herbie' \
+          'Comment=个人待办助手' \
+          'Exec=herbie' \
+          'Icon=herbie' \
+          'Terminal=false' \
+          'Categories=Utility;' > "$stage/herbie/herbie.desktop"
+        tar -C "$stage" -czf "${{ inputs.tarball-name }}" herbie
+        tar -tzf "${{ inputs.tarball-name }}"
+      shell: bash

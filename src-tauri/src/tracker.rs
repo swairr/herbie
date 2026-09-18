@@ -6,10 +6,10 @@
 //!   (2) `gate_notifier` 返回的 `GatedNotifier` 持同一 `Arc`,其回调跨闭包 mutate 状态。
 //! - DB 连接经 `ConnAccess` 抽象:`GlobalConn`(prod 锁全局 `db::get()`)/
 //!   `LocalConn`(test 锁局部 `Arc<Mutex<Connection>>`),仓储函数仍取 `&Connection`。
-//! - DI:`TrackerDeps` 仅暴露"当前空闲秒"与"本机时刻"两个纯取值。3c-B 已把
-//!   `ProdDeps::get_idle_sec` 接真实 `GetLastInputInfo`,并把电源/锁屏路由接到
-//!   `lib.rs::start_tracking_system`(生产接线);测试仍用 `FakeDeps` 直接驱动
-//!   `poll` / `on_power` —— 等价于 TS 的 `deps.fire(...)`。
+//! - DI:`TrackerDeps` 仅暴露"当前空闲秒"与"本机时刻"两个纯取值。`ProdDeps::get_idle_sec`
+//!   经 `platform/` 门面取真实平台值(Windows:GetLastInputInfo;Linux 恒 0,追踪未实现,
+//!   见 ADR 0004),电源/锁屏路由接到 `lib.rs::start_tracking_system`(生产接线);
+//!   测试仍用 `FakeDeps` 直接驱动 `poll` / `on_power` —— 等价于 TS 的 `deps.fire(...)`。
 //!
 //! 锁顺序:始终「先 state 后 db」——方法先锁 `self.state`,再在需要写库时经
 //! `conn.lock_conn` 锁连接。3b 无并发场景,该顺序留作 3c 注意锚点。
@@ -75,6 +75,9 @@ impl ConnAccess for LocalConn {
 
 /// 对齐 spike 的 4 个电源/会话事件;`start()` 的真实 power 路由留 3c,测试直接构造此枚举
 /// 调 `on_power` 驱动,等价于 TS `deps.fire('lock' | 'suspend')`。
+/// Linux 追踪未实现(ADR 0004):无生产构造点(`win/power.rs` 不编译),allow 抑制
+/// dead_code 警告 —— 匹配分支仍由测试覆盖。
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PowerEvent {
     Suspend,
@@ -90,12 +93,13 @@ pub trait TrackerDeps {
     fn now_local(&mut self) -> DateTime<Local>;
 }
 
-/// prod deps:`now_local` 即 `Local::now()`;`get_idle_sec` 3c-B 已接真实 Win32 空闲秒
-/// (`win::idle::get_idle_sec`,GetLastInputInfo + GetTickCount64 差值)。
+/// prod deps:`now_local` 即 `Local::now()`;`get_idle_sec` 经 `platform/` 门面取真实
+/// 平台空闲秒(Windows:GetLastInputInfo + GetTickCount64 差值;Linux 追踪未实现恒 0,
+/// 仅 off-work 命令路径可触达,无记录效果 —— ADR 0004)。
 pub struct ProdDeps;
 impl TrackerDeps for ProdDeps {
     fn get_idle_sec(&mut self) -> u64 {
-        crate::win::idle::get_idle_sec()
+        crate::platform::get_idle_sec()
     }
     fn now_local(&mut self) -> DateTime<Local> {
         Local::now()

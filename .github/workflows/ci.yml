@@ -37,6 +37,14 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
   build-windows:
     runs-on: windows-latest
     steps:
@@ -54,4 +62,23 @@ jobs:
         with:
           name: Herbie-win-x64-${{ github.sha }}
           path: Herbie-win-x64.exe
+          retention-days: 14
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # cargo test 已在 lint-test job 覆盖,此处只构建打包(tar.gz 绿色版)。
+      - name: Build Linux portable
+        uses: ./.github/actions/build-linux
+        with:
+          tarball-name: Herbie-linux-x64.tar.gz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Herbie-linux-x64-${{ github.sha }}
+          path: Herbie-linux-x64.tar.gz
           retention-days: 14

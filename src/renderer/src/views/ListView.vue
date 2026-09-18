@@ -16,6 +16,8 @@ const editing = ref<Record<string, { title: string; detail: string }>>({})
 const exporting = ref(false)
 const lastExport = ref<string | null>(null)
 const offWork = ref(false)
+const trackingAvailable = ref(true)
+const trackingReason = ref<string | null>(null)
 
 const newTitle = ref('')
 const newDetail = ref('')
@@ -236,6 +238,15 @@ async function loadOffWork(): Promise<void> {
   offWork.value = state.offWork
 }
 
+// 追踪能力(ADR 0004):不可用时「下班」入口禁用置灰,原因走 title(按钮无其他提示位)。
+const offWorkButtonText = computed(() =>
+  !trackingAvailable.value ? '不可用' : offWork.value ? '下班中' : '上班中'
+)
+const offWorkTitle = computed(() => {
+  if (!trackingAvailable.value) return trackingReason.value ?? '活动记录不可用'
+  return offWork.value ? '点击恢复记录' : '点击进入下班（停止记录）'
+})
+
 async function toggleOffWork(): Promise<void> {
   const state = await window.api.tracker.setOffWork(!offWork.value)
   offWork.value = state.offWork
@@ -248,6 +259,9 @@ function goSettings(): void {
 onMounted(async () => {
   await refresh()
   await loadOffWork()
+  const status = await window.api.tracker.getStatus()
+  trackingAvailable.value = status.available
+  trackingReason.value = status.reason
   detachTodosChanged = window.api.todos.onChanged(() => void refresh())
 })
 
@@ -264,10 +278,11 @@ onBeforeUnmount(() => {
         <button
           class="offwork"
           :class="{ active: offWork }"
-          :title="offWork ? '点击恢复记录' : '点击进入下班（停止记录）'"
+          :disabled="!trackingAvailable"
+          :title="offWorkTitle"
           @click="toggleOffWork"
         >
-          {{ offWork ? '下班中' : '上班中' }}
+          {{ offWorkButtonText }}
         </button>
         <button :disabled="exporting" @click="doExport">
           {{ exporting ? '导出中…' : '导出 Markdown' }}
@@ -587,5 +602,12 @@ onBeforeUnmount(() => {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+.offwork:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.offwork:disabled:hover {
+  border-color: var(--border);
 }
 </style>

@@ -54,10 +54,34 @@ fn replace(conn: Connection) {
     *g = Some(conn);
 }
 
-/// 沿用旧 Electron 数据路径 `%APPDATA%/herbie/herbie.db`(计划第25行、第57行);
-/// 不使用 Tauri 默认 `app_data_dir`(它会落到 `%APPDATA%/com.herbie.app` 而与旧数据错位)。
+/// 用户数据根目录:Windows `%APPDATA%`;Linux `$XDG_DATA_HOME`(未设 / 空 / 相对路径
+/// 时回退 `$HOME/.local/share` —— 按 XDG 规范,相对路径视为无效)。
+#[cfg(windows)]
+fn data_root() -> PathBuf {
+    PathBuf::from(std::env::var("APPDATA").expect("APPDATA not set"))
+}
+
+#[cfg(target_os = "linux")]
+fn data_root() -> PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        if !xdg.trim().is_empty() && Path::new(&xdg).is_absolute() {
+            return PathBuf::from(xdg);
+        }
+    }
+    let home = std::env::var("HOME").expect("HOME not set");
+    PathBuf::from(home).join(".local").join("share")
+}
+
+/// 应用数据目录 `<根>/herbie/`:数据库与默认导出目录同根(沿用旧 Electron `userData`
+/// 语义;Windows 上继续落在 `%APPDATA%/herbie`,与旧数据零迁移)。
+pub fn herbie_dir() -> PathBuf {
+    data_root().join("herbie")
+}
+
+/// 默认数据库路径:Windows `%APPDATA%/herbie/herbie.db`(旧 Electron 路径,零迁移);
+/// Linux `$XDG_DATA_HOME/herbie/herbie.db`(默认 `~/.local/share/herbie/herbie.db`)。
+/// 不使用 Tauri 默认 `app_data_dir`(Windows 会落到 `%APPDATA%/com.herbie.app` 而与旧数据错位)。
 /// 切片6/7 在 `run()` 启动处正式调用 `open_file(default_db_path())`。
 pub fn default_db_path() -> PathBuf {
-    let appdata = std::env::var("APPDATA").expect("APPDATA not set");
-    PathBuf::from(appdata).join("herbie").join("herbie.db")
+    herbie_dir().join("herbie.db")
 }

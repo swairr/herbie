@@ -510,7 +510,7 @@ mod tests {
     #[test]
     fn move_todo_errors_on_unknown_or_done_todos() {
         let mut conn = make();
-        let (a, b, c) = make_abc(&mut conn);
+        let (a, _b, c) = make_abc(&mut conn);
         assert!(move_todo(&mut conn, "nope", Some(&a.id)).is_err());
         assert!(move_todo(&mut conn, &a.id, Some("nope")).is_err());
         toggle_todo(&conn, &c.id, true).unwrap();

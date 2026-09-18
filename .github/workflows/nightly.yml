@@ -21,6 +21,8 @@ concurrency:
 jobs:
   nightly:
     runs-on: windows-latest
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
     steps:
       - name: Checkout (full history)
         uses: actions/checkout@v7
@@ -127,3 +129,35 @@ jobs:
           set -euo pipefail
           git tag -f nightly "$GITHUB_SHA"
           git push origin refs/tags/nightly --force
+
+  # Linux 绿色版资产:在 Windows job(已创建 release 并推进 tag)之后串行追加,
+  # 仅上传资产、不改 release 元数据(gh release upload),避免与 Windows job 竞争创建 release。
+  # 失败不阻塞 Windows 通道;下次有新 commit 时随 nightly 重试。
+  nightly-linux:
+    needs: nightly
+    if: needs.nightly.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build Linux portable
+        uses: ./.github/actions/build-linux
+        with:
+          tarball-name: Herbie-nightly-linux-x64.tar.gz
+
+      - name: Upload Linux asset to nightly release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload nightly Herbie-nightly-linux-x64.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
+
+      # 冒烟:确认发布后的资产可下载且哈希与本地一致(对齐 Windows job 的 manifest 校验)。
+      - name: Verify published asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          local_sha=$(sha256sum Herbie-nightly-linux-x64.tar.gz | awk '{print $1}')
+          curl -fsSL -o /tmp/Herbie-nightly-linux-x64.tar.gz \
+            https://github.com/swairr/herbie/releases/download/nightly/Herbie-nightly-linux-x64.tar.gz
+          echo "${local_sha}  /tmp/Herbie-nightly-linux-x64.tar.gz" | sha256sum -c -

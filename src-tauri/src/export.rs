@@ -5,7 +5,7 @@
 //! TS `src/main/export-time.ts`/`export-journal.ts` 的 `assertDay` 与 `writeFile` 语义:
 //! 校验失败返回 `Err(String)`,renderer 侧统一转 `{ ok: false, error }`。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::Serialize;
 
@@ -84,17 +84,17 @@ pub fn write_file(dir: &str, filename: &str, content: &str) -> Result<String, St
     Ok(target.to_string_lossy().into_owned())
 }
 
-/// 默认导出目录 `%APPDATA%/herbie` —— 与 `db::default_db_path()` 的目录相同,沿用
-/// Electron `userData`(即 `%APPDATA%/<appName>`)语义,使切片6/7 打开旧库与导出默认目录
-/// 落在同一处。与 db.rs 一致,APPDATA 缺失时 panic(Windows 上必有)。
+/// 默认导出目录:与 `db::default_db_path()` 同根 —— Windows `%APPDATA%/herbie`;
+/// Linux `$XDG_DATA_HOME/herbie`(默认 `~/.local/share/herbie`)。沿用 Electron
+/// `userData` 语义:打开旧库与导出默认目录落在同一处(`db::herbie_dir()`)。
 pub fn default_export_dir() -> String {
-    let appdata = std::env::var("APPDATA").expect("APPDATA not set");
-    PathBuf::from(appdata).join("herbie").to_string_lossy().into_owned()
+    crate::db::herbie_dir().to_string_lossy().into_owned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use uuid::Uuid;
 
     /// 临时目录守卫:唯一随机子目录建在系统 temp 下,测试结束自动整目录清理
@@ -193,12 +193,12 @@ mod tests {
         assert!(assert_day("2026-8-03").is_err());
     }
 
-    // 默认目录 = %APPDATA%/herbie(与 db::default_db_path() 同目录)。
+    // 默认目录 = 数据根/herbie(与 db::default_db_path() 同目录;路径解析已平台化)。
     #[test]
-    fn default_export_dir_joins_apdata_herbie() {
-        if let Ok(appdata) = std::env::var("APPDATA") {
-            let expected = PathBuf::from(appdata).join("herbie");
-            assert_eq!(Path::new(&default_export_dir()), expected.as_path());
-        }
+    fn default_export_dir_shares_db_root() {
+        assert_eq!(
+            Path::new(&default_export_dir()),
+            crate::db::herbie_dir().as_path()
+        );
     }
 }
