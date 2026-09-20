@@ -577,13 +577,24 @@ fn download_exe(
 
 /// 独占创建下载目标(`create_new`):`herbie_new.exe` 路径上如存在别的进程预置的同名
 /// 文件(本地替换攻击面),写入会失败而非覆盖;既有文件为本进程上次崩溃残留时清掉重试。
+/// 必须同时申请 `read`,否则后续校验从同一句柄读取时 Windows 报 `os error 5`(写句柄
+/// 无 `GENERIC_READ`;Linux 写-only fd 读亦返回 EBADF)。
 fn create_download_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
     use std::fs::OpenOptions;
-    match OpenOptions::new().write(true).create_new(true).open(path) {
+    match OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
         Ok(f) => Ok(f),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
             let _ = std::fs::remove_file(path);
-            OpenOptions::new().write(true).create_new(true).open(path)
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(path)
         }
         Err(e) => Err(e),
     }
@@ -833,6 +844,31 @@ mod tests {
         );
         let empty = sha256_stream(std::io::Cursor::new(Vec::<u8>::new())).unwrap();
         assert_eq!(empty, sha256_hex(b""));
+    }
+
+    /// 回归:下载句柄必须可读(Windows 写-only 句柄读取报 os error 5,校验阶段失败)。
+    /// 复刻 `apply_inner` 的写 → flush → seek → sha256_stream 流程,并覆盖残留文件
+    /// 触发的 remove-重试打开分支。
+    #[test]
+    fn download_file_handle_supports_write_then_read_verification() {
+        use std::io::{Read, Seek, SeekFrom, Write};
+        let path =
+            std::env::temp_dir().join(format!("herbie-update-handle-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        for attempt in 0..2 {
+            let mut f =
+                create_download_file(&path).unwrap_or_else(|e| panic!("attempt {attempt}: {e}"));
+            f.write_all(b"abc").unwrap();
+            f.flush().unwrap();
+            f.seek(SeekFrom::Start(0)).unwrap();
+            let mut back = String::new();
+            f.read_to_string(&mut back).unwrap();
+            assert_eq!(back, "abc", "attempt {attempt}");
+            f.seek(SeekFrom::Start(0)).unwrap();
+            assert_eq!(sha256_stream(&mut f).unwrap(), sha256_hex(b"abc"));
+            drop(f);
+        }
+        let _ = std::fs::remove_file(&path);
     }
 
     /// 跨语言契约对拍:与 `tests/update-state-fixture.test.ts` 读同一份
