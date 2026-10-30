@@ -19,7 +19,7 @@
 
 ## 架构
 
-- 行为的事实来源:`docs/milestone-*-requirements.md` 与实现计划。`CONTEXT.md` 定义领域
+- 行为的事实来源:`docs/milestone-*-requirements.md` 与实现计划。`GLOSSARY.md` 定义领域
   术语表（Todo / Label / Quick Add / Activity Segment / Journal Entry 等）。
 - **Rust 主进程**持有 `rusqlite` 单例（`src-tauri/src/db.rs`）。数据根目录平台化：Windows
   沿用旧路径 `%APPDATA%/herbie/herbie.db`（刻意不用 Tauri 默认 `app_data_dir`,避免与旧数据错位）;
@@ -67,3 +67,17 @@
 - **Linux 追踪不可用**:Linux 上不接线任何追踪原生能力（无活动片段产生）,以主窗口横幅 /
   托盘 tooltip / 设置页显式提示（ADR 0004）;「下班」入口与托盘菜单项禁用置灰。不要在
   Linux 上“顺便”实现部分追踪（前台 / 空闲 / 电源任一）——整体推迟是有意决策。
+
+## Agent skills
+
+### Issue tracker
+
+议题与规格以 GitHub Issues 形式存放在 `swairr/herbie`，统一用 `gh` CLI 操作。见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+五个 triage 角色沿用默认标签名（`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`）。见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单上下文（single-context）：根目录 `GLOSSARY.md` + `docs/adr/`。见 `docs/agents/domain.md`。

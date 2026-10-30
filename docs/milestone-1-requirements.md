@@ -4,7 +4,7 @@
 
 技术栈：Electron + TypeScript + better-sqlite3。
 
-领域术语见根目录 `CONTEXT.md`；架构决策见 `docs/adr/`。
+领域术语见根目录 `GLOSSARY.md`；架构决策见 `docs/adr/`。
 
 ## 1. 主界面：待办列表
 
