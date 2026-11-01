@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import type { TrackingStatus } from '@shared/types'
 import ListView from './views/ListView.vue'
+import ScheduleView from './views/ScheduleView.vue'
 import TimeView from './views/TimeView.vue'
 import JournalView from './views/JournalView.vue'
 import SettingsView from './views/SettingsView.vue'
@@ -24,11 +25,18 @@ onMounted(() => {
   window.api.tracker.getStatus().then((s) => (tracking.value = s))
 })
 
-const showTabs = computed(() => route.value === 'main' || route.value === 'time' || route.value === 'journal')
+const showTabs = computed(
+  () =>
+    route.value === 'main' ||
+    route.value === 'schedule' ||
+    route.value === 'time' ||
+    route.value === 'journal'
+)
 
 const view = computed(() => {
   if (route.value === 'quickadd') return QuickAddView
   if (route.value === 'settings') return SettingsView
+  if (route.value === 'schedule') return ScheduleView
   if (route.value === 'time') return TimeView
   if (route.value === 'journal') return JournalView
   return ListView
@@ -47,6 +55,7 @@ function goTo(r: string): void {
     </div>
     <nav v-if="showTabs" class="tabs">
       <button :class="{ active: route === 'main' }" @click="goTo('main')">待办</button>
+      <button :class="{ active: route === 'schedule' }" @click="goTo('schedule')">日程</button>
       <button :class="{ active: route === 'time' }" @click="goTo('time')">时间</button>
       <button :class="{ active: route === 'journal' }" @click="goTo('journal')">日志</button>
     </nav>

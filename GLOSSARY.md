@@ -51,6 +51,25 @@ Todo 只有两个生命周期状态，由 `completedAt` 派生，不单独存状
 - 与 Todo / Activity Segment **无结构化关联**（无外键）；关联通过正文中的 `#tag` 语义化表达。
 - 标题与正文创建后可随时编辑；删除为**软删除**（`deletedAt`，与 Todo 一致），UI 默认不展示，数据保留可恢复。
 
+## Planned Slot（计划时段）
+
+Todo 上的**单次**日程安排，字段直接挂在 Todo 上：
+
+- `plannedDate` — 本地自然日 `YYYY-MM-DD`，为空表示未安排
+- `plannedStart` / `plannedEnd` — 本地墙钟 `HH:MM`；两者同时为空表示「当天不排具体时段」
+
+规则：
+
+- 一个 Todo 最多一个计划时段；不做多段安排或重复日程。
+- 有时间段时 `plannedStart < plannedEnd` 且不跨天。
+- 计划属于用户意图，存本地墙钟而非 UTC 瞬时（ADR 0005）。
+- 完成 Todo 不清空计划；软删除的 Todo 不出现在日程视图。
+- 超期：未完成且计划结束时刻已过（仅日期时以自然日结束为准）。已完成永不超期。
+
+## Schedule View（日程视图）
+
+主界面「日程」页签：以本地自然日为单位，把 Planned Slot 放进时间轴；右侧「待安排」列出尚未安排计划的 pending Todo，支持拖拽安排、改期、调整时间段与完成操作。
+
 ## Activity Segment（活动片段）
 
 时间记录的最小单元：前台进程与窗口标题保持不变的一段连续时间。采集依赖运行环境的能力；环境不具备时，记录整体暂停（见 Tracking Unavailable）。

@@ -12,6 +12,9 @@ function make(partial: Partial<Todo>): Todo {
     completedAt: null,
     deletedAt: null,
     sortOrder: 0,
+    plannedDate: null,
+    plannedStart: null,
+    plannedEnd: null,
     ...partial
   }
 }

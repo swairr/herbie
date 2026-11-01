@@ -12,6 +12,9 @@ function make(partial: Partial<Todo>): Todo {
     completedAt: null,
     deletedAt: null,
     sortOrder: 0,
+    plannedDate: null,
+    plannedStart: null,
+    plannedEnd: null,
     ...partial
   }
 }
@@ -101,5 +104,25 @@ describe('exportMarkdown', () => {
   it('does not emit Completed line for pending', () => {
     const out = exportMarkdown([make({ id: 'p', title: 'P' })])
     expect(out).not.toContain('Completed:')
+  })
+
+  it('renders the planned slot when present', () => {
+    const out = exportMarkdown([
+      make({
+        id: 's',
+        title: 'Scheduled',
+        plannedDate: '2026-11-02',
+        plannedStart: '09:00',
+        plannedEnd: '10:00'
+      })
+    ])
+    expect(out).toContain('    计划：2026-11-02 09:00–10:00')
+  })
+
+  it('renders date-only plan and omits the line when unscheduled', () => {
+    const out = exportMarkdown([make({ id: 'd', title: 'Date only', plannedDate: '2026-11-02' })])
+    expect(out).toContain('    计划：2026-11-02')
+    const none = exportMarkdown([make({ id: 'n', title: 'None' })])
+    expect(none).not.toContain('计划：')
   })
 })

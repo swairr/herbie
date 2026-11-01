@@ -23,6 +23,9 @@ pub struct Todo {
     pub completed_at: Option<String>,
     pub deleted_at: Option<String>,
     pub sort_order: f64,
+    pub planned_date: Option<String>,
+    pub planned_start: Option<String>,
+    pub planned_end: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -43,6 +46,16 @@ pub struct TodoPatch {
     pub detail: Option<String>,
 }
 
+/// 计划时段入参(里程碑四)。三个字段都使用「null / 空串 = 清除」语义:
+/// 日期为空时起止时刻必须也为空;有日期时可只给日期(全天/未定时间)。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoSchedule {
+    pub planned_date: Option<String>,
+    pub planned_start: Option<String>,
+    pub planned_end: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct LabelCount {
     pub label: String,
@@ -54,6 +67,10 @@ pub fn now_iso() -> String {
     crate::time::iso_utc_z_millis(Utc::now())
 }
 
+const TODO_COLUMNS: &str =
+    "id, title, detail, createdAt, updatedAt, completedAt, deletedAt, sortOrder, \
+     plannedDate, plannedStart, plannedEnd";
+
 fn row_to_todo(r: &rusqlite::Row) -> rusqlite::Result<Todo> {
     Ok(Todo {
         id: r.get("id")?,
@@ -64,12 +81,15 @@ fn row_to_todo(r: &rusqlite::Row) -> rusqlite::Result<Todo> {
         completed_at: r.get("completedAt")?,
         deleted_at: r.get("deletedAt")?,
         sort_order: r.get("sortOrder")?,
+        planned_date: r.get("plannedDate")?,
+        planned_start: r.get("plannedStart")?,
+        planned_end: r.get("plannedEnd")?,
     })
 }
 
 fn fetch_todo(conn: &Connection, id: &str) -> rusqlite::Result<Todo> {
     conn.query_row(
-        "SELECT id, title, detail, createdAt, updatedAt, completedAt, deletedAt, sortOrder FROM todos WHERE id = ?1",
+        &format!("SELECT {} FROM todos WHERE id = ?1", TODO_COLUMNS),
         params![id],
         row_to_todo,
     )
@@ -85,7 +105,7 @@ pub fn list_todos(
     conn: &Connection,
     filter: Option<&TodoFilter>,
 ) -> rusqlite::Result<Vec<Todo>> {
-    let mut sql = String::from("SELECT id, title, detail, createdAt, updatedAt, completedAt, deletedAt, sortOrder FROM todos WHERE deletedAt IS NULL");
+    let mut sql = format!("SELECT {} FROM todos WHERE deletedAt IS NULL", TODO_COLUMNS);
     let mut binds: Vec<String> = Vec::new();
     if let Some(f) = filter {
         if let Some(labels) = &f.labels {
@@ -286,6 +306,142 @@ pub fn move_todo(conn: &mut Connection, id: &str, before: Option<&str>) -> Resul
     .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     fetch_todo(conn, id).map_err(|e| e.to_string())
+}
+
+/// 把 `HH:MM` / `H:MM` 规范化为两位补零的 `HH:MM`;非法返回 None。
+fn normalize_time_of_day(raw: &str) -> Option<String> {
+    let (h, m) = raw.trim().split_once(':')?;
+    let h: u32 = h.parse().ok()?;
+    let m: u32 = m.parse().ok()?;
+    if h > 23 || m > 59 {
+        return None;
+    }
+    Some(format!("{:02}:{:02}", h, m))
+}
+
+fn minutes_of_day(raw: &str) -> u32 {
+    let (h, m) = raw.split_once(':').unwrap_or(("0", "0"));
+    h.parse::<u32>().unwrap_or(0) * 60 + m.parse::<u32>().unwrap_or(0)
+}
+
+/// 空串与 None 等价(清除)。
+fn clean_optional(v: &Option<String>) -> Option<String> {
+    v.as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// 校验并规范化为零填充的本地自然日 `YYYY-MM-DD`。
+/// 复用 `day_bounds` 的溢出规范化(如 `2026-02-30` → `2026-03-02`),保证
+/// `plannedDate` 的字典序比较与范围查询可靠。
+fn normalize_planned_day(raw: &str) -> Option<String> {
+    let bounds = crate::time::day_bounds(raw)?;
+    let dt = chrono::DateTime::<Utc>::from_timestamp_millis(bounds.start_ms)?;
+    Some(crate::time::local_date_string(dt))
+}
+
+/// `scheduleTodo(id, slot)`:校验并整体替换计划时段;传空即清除。
+///
+/// 规则(里程碑四):
+/// - `plannedDate` 为空 → `plannedStart` / `plannedEnd` 必须也为空;
+/// - 有日期、无开始 → 结束必须也为空(全天/未定时间);
+/// - 有开始 → 结束必须存在且 `start < end`,不跨天;
+/// - 日期用 `day_bounds` 校验,时刻规范化为 `HH:MM`;
+/// - 成功后更新 `updatedAt` 并回读。
+pub fn schedule_todo(
+    conn: &Connection,
+    id: &str,
+    slot: &TodoSchedule,
+) -> Result<Todo, String> {
+    fetch_todo(conn, id).map_err(|_| format!("todo not found: {}", id))?;
+
+    let date = match clean_optional(&slot.planned_date) {
+        Some(d) => Some(
+            normalize_planned_day(&d).ok_or_else(|| format!("invalid plannedDate: {}", d))?,
+        ),
+        None => None,
+    };
+
+    let start = match clean_optional(&slot.planned_start) {
+        Some(s) => Some(
+            normalize_time_of_day(&s).ok_or_else(|| format!("invalid plannedStart: {}", s))?,
+        ),
+        None => None,
+    };
+    let end = match clean_optional(&slot.planned_end) {
+        Some(s) => Some(
+            normalize_time_of_day(&s).ok_or_else(|| format!("invalid plannedEnd: {}", s))?,
+        ),
+        None => None,
+    };
+
+    if date.is_none() && (start.is_some() || end.is_some()) {
+        return Err("plannedDate is required when a time range is set".into());
+    }
+    match (&start, &end) {
+        (None, Some(_)) => return Err("plannedStart is required when plannedEnd is set".into()),
+        (Some(_), None) => return Err("plannedEnd is required when plannedStart is set".into()),
+        (Some(s), Some(e)) if minutes_of_day(s) >= minutes_of_day(e) => {
+            return Err("plannedStart must be before plannedEnd".into())
+        }
+        _ => {}
+    }
+
+    let now = now_iso();
+    conn.execute(
+        "UPDATE todos SET plannedDate = ?1, plannedStart = ?2, plannedEnd = ?3, updatedAt = ?4
+         WHERE id = ?5",
+        params![date, start, end, now, id],
+    )
+    .map_err(|e| e.to_string())?;
+    fetch_todo(conn, id).map_err(|e| e.to_string())
+}
+
+/// 取本地日期范围 `[from, to]`(含端点)内已安排的待办,含已完成;按日期 →
+/// 「无具体时间在前 → 开始时刻 → 手动 sortOrder」排序。
+pub fn list_scheduled_todos(
+    conn: &Connection,
+    from: &str,
+    to: &str,
+) -> Result<Vec<Todo>, String> {
+    if crate::time::day_bounds(from).is_none() {
+        return Err(format!("invalid day: {}", from));
+    }
+    if crate::time::day_bounds(to).is_none() {
+        return Err(format!("invalid day: {}", to));
+    }
+    let from_day = normalize_planned_day(from).expect("validated above");
+    let to_day = normalize_planned_day(to).expect("validated above");
+    let sql = format!(
+        "SELECT {} FROM todos
+         WHERE deletedAt IS NULL AND plannedDate IS NOT NULL AND plannedDate >= ?1 AND plannedDate <= ?2
+         ORDER BY plannedDate ASC,
+                  CASE WHEN plannedStart IS NULL THEN 0 ELSE 1 END ASC,
+                  plannedStart ASC,
+                  sortOrder ASC",
+        TODO_COLUMNS
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![from_day, to_day], row_to_todo)
+        .map_err(|e| e.to_string())?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())
+}
+
+/// 取尚未安排计划的 pending 待办(未完成、未删除、`plannedDate IS NULL`),
+/// 沿用待办列表的手动 `sortOrder` 升序,供日程页「待安排」使用。
+pub fn list_unscheduled_todos(conn: &Connection) -> rusqlite::Result<Vec<Todo>> {
+    let sql = format!(
+        "SELECT {} FROM todos
+         WHERE deletedAt IS NULL AND completedAt IS NULL AND plannedDate IS NULL
+         ORDER BY sortOrder ASC",
+        TODO_COLUMNS
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], row_to_todo)?;
+    rows.collect()
 }
 
 #[cfg(test)]
@@ -554,5 +710,133 @@ mod tests {
             .map(|t| t.id)
             .collect();
         assert_eq!(done, vec![b.id, a.id]);
+    }
+
+    fn slot(
+        date: Option<&str>,
+        start: Option<&str>,
+        end: Option<&str>,
+    ) -> TodoSchedule {
+        TodoSchedule {
+            planned_date: date.map(str::to_string),
+            planned_start: start.map(str::to_string),
+            planned_end: end.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn schedules_a_todo_with_a_time_range_and_returns_it_from_list_todos() {
+        let mut conn = make();
+        let t = create_todo(&mut conn, &TodoInput { title: "a".into(), detail: String::new() }).unwrap();
+        let scheduled = schedule_todo(&conn, &t.id, &slot(Some("2026-11-02"), Some("9:00"), Some("10:30"))).unwrap();
+        assert_eq!(scheduled.planned_date.as_deref(), Some("2026-11-02"));
+        assert_eq!(scheduled.planned_start.as_deref(), Some("09:00"));
+        assert_eq!(scheduled.planned_end.as_deref(), Some("10:30"));
+
+        let from_list = list_todos(&conn, None).unwrap();
+        let stored = from_list.iter().find(|x| x.id == t.id).unwrap();
+        assert_eq!(stored.planned_start.as_deref(), Some("09:00"));
+    }
+
+    #[test]
+    fn schedules_a_todo_with_date_only_and_clears_it() {
+        let mut conn = make();
+        let t = create_todo(&mut conn, &TodoInput { title: "a".into(), detail: String::new() }).unwrap();
+        let scheduled = schedule_todo(&conn, &t.id, &slot(Some("2026-11-02"), None, None)).unwrap();
+        assert_eq!(scheduled.planned_date.as_deref(), Some("2026-11-02"));
+        assert!(scheduled.planned_start.is_none());
+        assert!(scheduled.planned_end.is_none());
+
+        let cleared = schedule_todo(&conn, &t.id, &slot(None, None, None)).unwrap();
+        assert!(cleared.planned_date.is_none());
+        assert!(cleared.planned_start.is_none());
+        assert!(cleared.planned_end.is_none());
+    }
+
+    #[test]
+    fn normalizes_unpadded_planned_dates() {
+        let mut conn = make();
+        let t = create_todo(&mut conn, &TodoInput { title: "a".into(), detail: String::new() }).unwrap();
+        let scheduled = schedule_todo(&conn, &t.id, &slot(Some("2026-2-3"), None, None)).unwrap();
+        assert_eq!(scheduled.planned_date.as_deref(), Some("2026-02-03"));
+        let got = list_scheduled_todos(&conn, "2026-2-3", "2026-2-3").unwrap();
+        assert_eq!(got.len(), 1);
+    }
+
+    #[test]
+    fn rejects_invalid_schedule_combinations() {
+        let mut conn = make();
+        let t = create_todo(&mut conn, &TodoInput { title: "a".into(), detail: String::new() }).unwrap();
+
+        assert!(schedule_todo(&conn, "nope", &slot(Some("2026-11-02"), None, None)).is_err());
+        assert!(schedule_todo(&conn, &t.id, &slot(None, Some("09:00"), Some("10:00"))).is_err());
+        assert!(schedule_todo(&conn, &t.id, &slot(Some("2026-11-02"), None, Some("10:00"))).is_err());
+        assert!(schedule_todo(&conn, &t.id, &slot(Some("2026-11-02"), Some("09:00"), None)).is_err());
+        assert!(schedule_todo(&conn, &t.id, &slot(Some("2026-11-02"), Some("10:00"), Some("10:00"))).is_err());
+        assert!(schedule_todo(&conn, &t.id, &slot(Some("2026-11-02"), Some("11:00"), Some("10:00"))).is_err());
+        assert!(schedule_todo(&conn, &t.id, &slot(Some("not-a-day"), None, None)).is_err());
+        assert!(schedule_todo(&conn, &t.id, &slot(Some("2026-11-02"), Some("24:00"), Some("25:00"))).is_err());
+    }
+
+    #[test]
+    fn empty_strings_clear_the_slot_like_null() {
+        let mut conn = make();
+        let t = create_todo(&mut conn, &TodoInput { title: "a".into(), detail: String::new() }).unwrap();
+        schedule_todo(&conn, &t.id, &slot(Some("2026-11-02"), Some("09:00"), Some("10:00"))).unwrap();
+        let cleared = schedule_todo(&conn, &t.id, &slot(Some(""), Some(""), Some(""))).unwrap();
+        assert!(cleared.planned_date.is_none());
+    }
+
+    #[test]
+    fn list_scheduled_orders_by_day_then_untimed_then_start_and_includes_done() {
+        let mut conn = make();
+        let a = create_todo(&mut conn, &TodoInput { title: "a".into(), detail: String::new() }).unwrap();
+        wait();
+        let b = create_todo(&mut conn, &TodoInput { title: "b".into(), detail: String::new() }).unwrap();
+        wait();
+        let c = create_todo(&mut conn, &TodoInput { title: "c".into(), detail: String::new() }).unwrap();
+
+        schedule_todo(&conn, &a.id, &slot(Some("2026-11-03"), Some("10:00"), Some("11:00"))).unwrap();
+        schedule_todo(&conn, &b.id, &slot(Some("2026-11-02"), None, None)).unwrap();
+        schedule_todo(&conn, &c.id, &slot(Some("2026-11-02"), Some("09:00"), Some("10:00"))).unwrap();
+        toggle_todo(&conn, &a.id, true).unwrap();
+
+        let got = list_scheduled_todos(&conn, "2026-11-02", "2026-11-03").unwrap();
+        assert_eq!(
+            got.iter().map(|t| t.id.clone()).collect::<Vec<_>>(),
+            vec![b.id.clone(), c.id.clone(), a.id.clone()]
+        );
+        assert!(got[2].completed_at.is_some(), "done scheduled todos are included");
+    }
+
+    #[test]
+    fn list_scheduled_excludes_deleted_and_out_of_range() {
+        let mut conn = make();
+        let a = create_todo(&mut conn, &TodoInput { title: "a".into(), detail: String::new() }).unwrap();
+        let b = create_todo(&mut conn, &TodoInput { title: "b".into(), detail: String::new() }).unwrap();
+        schedule_todo(&conn, &a.id, &slot(Some("2026-11-02"), None, None)).unwrap();
+        schedule_todo(&conn, &b.id, &slot(Some("2026-11-09"), None, None)).unwrap();
+        soft_delete_todo(&conn, &a.id).unwrap();
+
+        assert!(list_scheduled_todos(&conn, "2026-11-02", "2026-11-08").unwrap().is_empty());
+        assert!(list_scheduled_todos(&conn, "bad", "2026-11-08").is_err());
+    }
+
+    #[test]
+    fn list_unscheduled_returns_only_pending_untimed_todos_in_sort_order() {
+        let mut conn = make();
+        let (a, b, c) = make_abc(&mut conn);
+        // 展示序 [c, b, a] → 待安排顺序应保持一致
+        schedule_todo(&conn, &b.id, &slot(Some("2026-11-02"), None, None)).unwrap();
+        toggle_todo(&conn, &a.id, true).unwrap();
+        soft_delete_todo(&conn, &c.id).unwrap();
+
+        let got = list_unscheduled_todos(&conn).unwrap();
+        // c 被软删、a 已完成、b 已安排 → 空
+        assert!(got.is_empty());
+
+        let d = create_todo(&mut conn, &TodoInput { title: "d".into(), detail: String::new() }).unwrap();
+        let got = list_unscheduled_todos(&conn).unwrap();
+        assert_eq!(got.iter().map(|t| t.id.clone()).collect::<Vec<_>>(), vec![d.id]);
     }
 }

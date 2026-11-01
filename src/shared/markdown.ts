@@ -9,6 +9,14 @@ function indent(line: string): string {
   return '    ' + line
 }
 
+function planLabel(t: Todo): string | null {
+  if (!t.plannedDate) return null
+  if (t.plannedStart && t.plannedEnd) {
+    return `计划：${t.plannedDate} ${t.plannedStart}–${t.plannedEnd}`
+  }
+  return `计划：${t.plannedDate}`
+}
+
 function renderItem(t: Todo): string[] {
   const box = t.completedAt ? '[x]' : '[ ]'
   const head = `- ${box} ${t.title} <!-- id:${t.id} -->`
@@ -16,6 +24,8 @@ function renderItem(t: Todo): string[] {
   if (t.detail.trim().length > 0) {
     for (const ln of t.detail.split('\n')) out.push(indent(ln))
   }
+  const plan = planLabel(t)
+  if (plan) out.push(indent(plan))
   out.push(indent(`Created: ${formatLocalShort(t.createdAt)}`))
   if (t.completedAt) {
     out.push(indent(`Completed: ${formatLocalShort(t.completedAt)}`))

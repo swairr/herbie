@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { LabelCount, Todo, TodoFilter } from '@shared/types'
-import { formatLocalShort } from '@shared/time'
+import { formatLocalShort, localDateString } from '@shared/time'
+import { formatPlanLabel, isSlotOverdue } from '@shared/schedule'
 import { parseLabels } from '@shared/labels'
 import { groupItems } from '../utils'
 import DetailText from '../components/DetailText.vue'
+import ScheduleEditor from '../components/ScheduleEditor.vue'
 import { useAddTodo } from '../composables/useAddTodo'
 
 const all = ref<Todo[]>([])
@@ -18,6 +20,10 @@ const lastExport = ref<string | null>(null)
 const offWork = ref(false)
 const trackingAvailable = ref(true)
 const trackingReason = ref<string | null>(null)
+const scheduleTarget = ref<Todo | null>(null)
+const now = ref(new Date())
+const today = computed(() => localDateString(now.value.toISOString()))
+let tickTimer: ReturnType<typeof setInterval> | undefined
 
 const newTitle = ref('')
 const newDetail = ref('')
@@ -225,6 +231,23 @@ function labelList(t: Todo): string[] {
   return parseLabels(t.detail)
 }
 
+function planLabel(t: Todo): string {
+  return formatPlanLabel(t, today.value)
+}
+
+function isOverdue(t: Todo): boolean {
+  return isSlotOverdue(t, now.value)
+}
+
+function openSchedule(t: Todo): void {
+  scheduleTarget.value = t
+}
+
+async function onScheduled(): Promise<void> {
+  scheduleTarget.value = null
+  await refresh()
+}
+
 async function doExport(): Promise<void> {
   exporting.value = true
   const res = await window.api.export.exportMarkdown()
@@ -263,10 +286,14 @@ onMounted(async () => {
   trackingAvailable.value = status.available
   trackingReason.value = status.reason
   detachTodosChanged = window.api.todos.onChanged(() => void refresh())
+  tickTimer = setInterval(() => {
+    now.value = new Date()
+  }, 60000)
 })
 
 onBeforeUnmount(() => {
   detachTodosChanged()
+  if (tickTimer) clearInterval(tickTimer)
 })
 </script>
 
@@ -362,12 +389,27 @@ onBeforeUnmount(() => {
           <div class="title-area">
             <div class="title">{{ t.title }}</div>
           </div>
+          <span
+            v-if="t.plannedDate"
+            class="plan-chip"
+            :class="{ overdue: isOverdue(t) }"
+            :title="isOverdue(t) ? '已超过计划时间' : '计划时间'"
+            @click.stop="openSchedule(t)"
+          >
+            {{ planLabel(t) }}
+          </span>
           <span class="meta">{{ formatLocalShort(t.createdAt) }}</span>
         </div>
 
         <div v-if="expanded.has(t.id)" class="edit" @click.stop>
           <input v-model="editing[t.id]!.title" spellcheck="false" placeholder="标题" />
           <textarea v-model="editing[t.id]!.detail" spellcheck="false" rows="4" placeholder="详情，#标签 自动识别"></textarea>
+          <div class="plan-edit" @click.stop>
+            <span class="plan-text">计划：{{ t.plannedDate ? planLabel(t) : '未安排' }}</span>
+            <button class="ghost sm" @click="openSchedule(t)">
+              {{ t.plannedDate ? '修改计划' : '安排日程' }}
+            </button>
+          </div>
           <div class="edit-actions">
             <span v-if="labelList(t).length" class="hint">将解析标签：{{ labelList(t).join(', ') }}</span>
             <div>
@@ -397,6 +439,9 @@ onBeforeUnmount(() => {
               <div class="title-area">
                 <div class="title strokethrough">{{ t.title }}</div>
               </div>
+              <span v-if="t.plannedDate" class="plan-chip" @click.stop="openSchedule(t)">
+                {{ planLabel(t) }}
+              </span>
               <span class="meta">{{ formatLocalShort(t.completedAt) }}</span>
               <button class="danger" @click="remove(t)">删除</button>
             </div>
@@ -407,6 +452,14 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </section>
+
+    <ScheduleEditor
+      v-if="scheduleTarget"
+      :todo="scheduleTarget"
+      :default-date="today"
+      @updated="onScheduled"
+      @close="scheduleTarget = null"
+    />
   </div>
 </template>
 
@@ -550,6 +603,44 @@ onBeforeUnmount(() => {
 }
 .meta {
   color: var(--muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.plan-chip {
+  font-size: 10px;
+  color: var(--accent);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 7px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.plan-chip:hover {
+  border-color: var(--accent);
+}
+.plan-chip.overdue {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.plan-edit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.plan-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sm {
+  padding: 1px 7px;
   font-size: 11px;
   flex-shrink: 0;
 }

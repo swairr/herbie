@@ -7,6 +7,16 @@ export interface Todo {
   completedAt: string | null
   deletedAt: string | null
   sortOrder: number
+  plannedDate: string | null
+  plannedStart: string | null
+  plannedEnd: string | null
+}
+
+/** 计划时段(里程碑四):日期 + 可选本地墙钟时间段,三字段均 null 表示未安排。 */
+export interface TodoSchedule {
+  plannedDate: string | null
+  plannedStart: string | null
+  plannedEnd: string | null
 }
 
 export interface LabelCount {
@@ -146,6 +156,9 @@ export interface Api {
     softDelete: (id: string) => Promise<void>
     labels: () => Promise<LabelCount[]>
     move: (id: string, beforeId: string | null) => Promise<Todo>
+    schedule: (id: string, slot: TodoSchedule) => Promise<Todo>
+    scheduled: (from: string, to: string) => Promise<Todo[]>
+    unscheduled: () => Promise<Todo[]>
     onChanged: (cb: (todo: Todo) => void) => () => void
   }
   settings: {

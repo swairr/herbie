@@ -28,7 +28,7 @@ use std::time::Duration;
 use segment::{Segment, SegmentPatch};
 use journal::{JournalEntry, JournalInput, JournalPatch};
 use export::ExportDayData;
-use todos::{LabelCount, Todo, TodoFilter, TodoInput, TodoPatch};
+use todos::{LabelCount, Todo, TodoFilter, TodoInput, TodoPatch, TodoSchedule};
 use tauri::Emitter;
 use platform::ForegroundHook;
 use tracker::{GatedNotifier, GlobalConn, OffWorkState, ProdDeps, Tracker};
@@ -215,6 +215,30 @@ fn todos_move(id: String, before_id: Option<String>) -> Result<Todo, String> {
     let mut g = db::get();
     let conn = g.as_mut().ok_or("DB not initialized")?;
     todos::move_todo(conn, &id, before_id.as_deref())
+}
+
+/// 设置 / 清除待办的计划时段(里程碑四)。`slot` 三字段传 null 即清除。
+#[tauri::command]
+fn todos_schedule(id: String, slot: TodoSchedule) -> Result<Todo, String> {
+    let g = db::get();
+    let conn = g.as_ref().ok_or("DB not initialized")?;
+    todos::schedule_todo(conn, &id, &slot)
+}
+
+/// 取本地日期范围 `[from, to]` 内已安排的待办(含已完成),供日程页使用。
+#[tauri::command]
+fn todos_scheduled(from: String, to: String) -> Result<Vec<Todo>, String> {
+    let g = db::get();
+    let conn = g.as_ref().ok_or("DB not initialized")?;
+    todos::list_scheduled_todos(conn, &from, &to)
+}
+
+/// 取未安排计划的 pending 待办,供日程页「待安排」使用。
+#[tauri::command]
+fn todos_unscheduled() -> Result<Vec<Todo>, String> {
+    let g = db::get();
+    let conn = g.as_ref().ok_or("DB not initialized")?;
+    todos::list_unscheduled_todos(conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -430,6 +454,9 @@ pub fn run() {
             todos_soft_delete,
             todos_labels,
             todos_move,
+            todos_schedule,
+            todos_scheduled,
+            todos_unscheduled,
             journal_list,
             journal_create,
             journal_update,

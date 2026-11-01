@@ -13,7 +13,7 @@
 - `pnpm test` — 跑一次 Vitest,纯 Node 环境（保留的 shared 纯函数测试 + 双实现点夹具对拍）。
 - `pnpm test:watch` — Vitest watch 模式。
 - `pnpm build:renderer` — 单独构建 renderer 到 `dist/renderer`（vite,`vite.renderer.config.ts`）。
-- `cargo test --manifest-path src-tauri/Cargo.toml` — 跑 Rust 侧全部单测（当前 143 条;Windows 与 Linux 均可跑）。
+- `cargo test --manifest-path src-tauri/Cargo.toml` — 跑 Rust 侧全部单测（当前 154 条;Windows 与 Linux 均可跑）。
 - Linux 绿色版打包：`pnpm tauri build --no-bundle` + CI `build-linux` action（tar.gz:二进制 + `.desktop` + 图标）。
 - `pnpm tauri ...` — 透传 Tauri CLI（如 `pnpm tauri dev`、`pnpm tauri build`、`pnpm tauri icon`）。
 
@@ -30,10 +30,10 @@
 - **锁模型**:全局 `Mutex<Option<Connection>>`;命令层取 `db::get()` 的守卫并把
   `&Connection` 传给仓储函数,仓储层**不自锁**（避免重入死锁）,互斥保证同一时刻仅一个
   命令访问 DB（对齐 better-sqlite3 同步单连接语义）。
-- 共享纯逻辑（`src/shared/`）:标签解析 / 时间 / 聚合 / markdown,被 Rust 与 renderer
+- 共享纯逻辑（`src/shared/`）:标签解析 / 时间 / 日程计划 / 聚合 / markdown,被 Rust 与 renderer
   共同引用或双实现。**双实现点**（`labels` 解析、`splitAtMidnight`）用
   `tests/fixtures/*.json` 在 cargo test 与 vitest 之间跨语言对拍;任一侧改动必须同步夹具。
-  其余 TS 纯函数（markdown 生成、聚合）仅 renderer 侧保留,行为由 vitest 覆盖。
+  其余 TS 纯函数（markdown 生成、聚合、日程布局）仅 renderer 侧保留,行为由 vitest 覆盖。
 - renderer（`src/renderer`,vite）经 `window.api` 薄封装
   （`src/renderer/src/api/tauri.ts`）走 `invoke`（请求类命令）/ `listen`（事件类）,
   形状与旧 preload API 等价,**Vue 组件零改动**。

@@ -10,17 +10,19 @@ const SQL_0001: &str = include_str!("../../migrations/0001.sql");
 const SQL_0002: &str = include_str!("../../migrations/0002.sql");
 const SQL_0003: &str = include_str!("../../migrations/0003.sql");
 const SQL_0004: &str = include_str!("../../migrations/0004.sql");
+const SQL_0005: &str = include_str!("../../migrations/0005.sql");
 
 struct Migration {
     version: i64,
     sql: &'static str,
 }
 
-const MIGRATIONS: [Migration; 4] = [
+const MIGRATIONS: [Migration; 5] = [
     Migration { version: 1, sql: SQL_0001 },
     Migration { version: 2, sql: SQL_0002 },
     Migration { version: 3, sql: SQL_0003 },
     Migration { version: 4, sql: SQL_0004 },
+    Migration { version: 5, sql: SQL_0005 },
 ];
 
 /// 在给定连接上执行所有未应用的迁移,返回最后应用的版本号。
@@ -111,11 +113,12 @@ mod tests {
         run_migrations(&mut conn).expect("rerun should not error");
         let mut stmt = conn.prepare("SELECT version FROM migrations ORDER BY version").unwrap();
         let rows: Vec<i64> = stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
-        assert_eq!(rows.len(), 4);
+        assert_eq!(rows.len(), 5);
         assert_eq!(rows[0], 1);
         assert_eq!(rows[1], 2);
         assert_eq!(rows[2], 3);
         assert_eq!(rows[3], 4);
+        assert_eq!(rows[4], 5);
     }
 
     #[test]
@@ -313,5 +316,53 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM journal_labels", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn v5_adds_planned_slot_columns_and_index() {
+        let mut conn = make();
+        run_migrations(&mut conn).unwrap();
+        let v: i64 = conn
+            .query_row("SELECT version FROM migrations WHERE version = 5", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, 5);
+
+        conn.execute(
+            "INSERT INTO todos (id, title, detail, createdAt, updatedAt, completedAt, deletedAt)
+             VALUES ('s1', 'scheduled', '', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL, NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE todos SET plannedDate = '2026-11-02', plannedStart = '09:00', plannedEnd = '10:00' WHERE id = 's1'",
+            [],
+        )
+        .unwrap();
+        let slot: (Option<String>, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT plannedDate, plannedStart, plannedEnd FROM todos WHERE id = 's1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(slot.0.as_deref(), Some("2026-11-02"));
+        assert_eq!(slot.1.as_deref(), Some("09:00"));
+        assert_eq!(slot.2.as_deref(), Some("10:00"));
+
+        let idx: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_todos_plannedDate'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn v5_migration_is_idempotent_on_rerun() {
+        let mut conn = make();
+        run_migrations(&mut conn).unwrap();
+        run_migrations(&mut conn).expect("rerun should not error");
     }
 }

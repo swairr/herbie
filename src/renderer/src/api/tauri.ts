@@ -77,6 +77,9 @@ export function createTauriApi(): Api {
       softDelete: (id) => invoke<void>('todos_soft_delete', { id }),
       labels: () => invoke<LabelCount[]>('todos_labels'),
       move: (id, beforeId) => invoke<Todo>('todos_move', { id, beforeId }),
+      schedule: (id, slot) => invoke<Todo>('todos_schedule', { id, slot }),
+      scheduled: (from, to) => invoke<Todo[]>('todos_scheduled', { from, to }),
+      unscheduled: () => invoke<Todo[]>('todos_unscheduled'),
       onChanged: (cb) => attach('todos://changed', (p) => cb(p as Todo))
     },
     settings: {
