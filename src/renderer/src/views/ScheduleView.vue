@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { Todo } from '@shared/types'
+import type { JournalEntry, Segment, Todo, TrackingStatus } from '@shared/types'
 import { localDateString } from '@shared/time'
 import {
   addLocalDays,
   dayOfMonth,
-  gridRange,
+  expandGridRange,
   isSlotOverdue,
   layoutDay,
   minutesToTime,
@@ -13,31 +13,50 @@ import {
   timeToMinutes,
   weekDates,
   weekdayLabel,
-  SNAP_MINUTES,
-  type PositionedBlock
+  SNAP_MINUTES
 } from '@shared/schedule'
+import { actualMsByTodo, aggregateDaySegments, placeJournals } from '@shared/timeline'
+import { topFor } from '../timeline-geometry'
 import ScheduleEditor from '../components/ScheduleEditor.vue'
+import SegmentEditor from '../components/SegmentEditor.vue'
+import JournalEditor from '../components/JournalEditor.vue'
+import DayTimeline from '../components/DayTimeline.vue'
+import PlanTrack from '../components/PlanTrack.vue'
+import ActualTrack from '../components/ActualTrack.vue'
+import JournalTrack from '../components/JournalTrack.vue'
 
-const PX_PER_MIN = 0.8
+// 日程页只做编排:状态、取数、拖拽/改期、弹层开关;三轨渲染在各自组件里,
+// 聚合与布局规则在 `shared/timeline.ts` / `shared/schedule.ts`(可纯函数测试)。
 const SNAP = SNAP_MINUTES
+type NarrowTrack = 'plan' | 'actual' | 'journal'
 
 const day = ref(todayLocal())
 const weekTodos = ref<Todo[]>([])
+const allTodos = ref<Todo[]>([])
 const backlog = ref<Todo[]>([])
-const editing = ref<Todo | null>(null)
+const segments = ref<Segment[]>([])
+const journals = ref<JournalEntry[]>([])
+const tracking = ref<TrackingStatus | null>(null)
+
+const editingTodo = ref<Todo | null>(null)
+const editingSegment = ref<Segment | null>(null)
+const editingJournal = ref<JournalEntry | null>(null)
+
 const now = ref(new Date())
+const narrow = ref(false)
+const narrowTrack = ref<NarrowTrack>('plan')
+const hideIdle = ref(false)
 const errorMsg = ref<string | null>(null)
 const backlogQuery = ref('')
 
 const dragId = ref<string | null>(null)
 const dragDuration = ref(60)
-const timelineEl = ref<HTMLElement | null>(null)
-
-const resizing = ref<{ id: string; startMin: number; endMin: number; startY: number } | null>(null)
-const resizePreview = ref<{ id: string; endMin: number } | null>(null)
 
 let tickTimer: ReturnType<typeof setInterval> | undefined
 let errorTimer: ReturnType<typeof setTimeout> | undefined
+let mediaQuery: MediaQueryList | null = null
+let offTodos: (() => void) | null = null
+let refreshSeq = 0
 
 function todayLocal(): string {
   return localDateString(new Date().toISOString())
@@ -50,19 +69,50 @@ const weekEnd = computed(() => week.value[6])
 
 const dayTodos = computed(() => weekTodos.value.filter((t) => t.plannedDate === day.value))
 const untimedTodos = computed(() => dayTodos.value.filter((t) => !isTimed(t)))
-const blocks = computed(() => layoutDay(dayTodos.value))
-const range = computed(() => gridRange(dayTodos.value))
-const gridHeight = computed(() => (range.value.endMin - range.value.startMin) * PX_PER_MIN)
-const hourMarks = computed(() => {
-  const out: number[] = []
-  for (let m = range.value.startMin; m <= range.value.endMin; m += 60) out.push(m)
-  return out
+const todoTitles = computed<Record<string, string>>(() => {
+  const map: Record<string, string> = {}
+  for (const t of allTodos.value) map[t.id] = t.title
+  return map
 })
+
+const planBlocks = computed(() => layoutDay(dayTodos.value))
+const actualMs = computed(() => actualMsByTodo(segments.value, now.value))
+const actualBlocks = computed(() =>
+  aggregateDaySegments(segments.value, todoTitles.value, day.value, now.value)
+)
+const visibleActualBlocks = computed(() =>
+  hideIdle.value ? actualBlocks.value.filter((b) => !b.idle) : actualBlocks.value
+)
+const journalPlacement = computed(() => placeJournals(journals.value))
+const timedJournals = computed(() => journalPlacement.value.timed)
+const untimedJournals = computed(() => journalPlacement.value.untimed)
+
+const range = computed(() =>
+  expandGridRange([
+    ...planBlocks.value.map((b) => ({ startMin: b.startMin, endMin: b.endMin })),
+    ...actualBlocks.value.map((b) => ({ startMin: b.startMin, endMin: b.endMin })),
+    ...timedJournals.value.map((t) => ({ startMin: t.startMin, endMin: t.startMin }))
+  ])
+)
 const nowLineTop = computed(() => {
   if (day.value !== today.value) return null
   const minutes = now.value.getHours() * 60 + now.value.getMinutes()
   if (minutes < range.value.startMin || minutes > range.value.endMin) return null
-  return (minutes - range.value.startMin) * PX_PER_MIN
+  return topFor(minutes, range.value)
+})
+
+const showPlan = computed(() => !narrow.value || narrowTrack.value === 'plan')
+const showActual = computed(() => !narrow.value || narrowTrack.value === 'actual')
+const showJournal = computed(() =>
+  narrow.value ? narrowTrack.value === 'journal' : timedJournals.value.length > 0
+)
+
+const actualEmptyHint = computed(() => {
+  if (actualBlocks.value.length > 0 && visibleActualBlocks.value.length === 0) {
+    return '已隐藏空闲片段'
+  }
+  if (tracking.value && !tracking.value.available) return '活动记录不可用（当前平台不支持）'
+  return '当日暂无活动片段'
 })
 
 const dayCounts = computed<Record<string, number>>(() => {
@@ -90,6 +140,12 @@ function isOverdue(t: Todo): boolean {
   return isSlotOverdue(t, now.value)
 }
 
+function journalHead(e: JournalEntry): string {
+  if (e.title && e.title.trim()) return e.title.trim()
+  const idx = e.body.indexOf('\n')
+  return (idx === -1 ? e.body : e.body.slice(0, idx)).trim() || '(无内容)'
+}
+
 function flashError(e: unknown): void {
   errorMsg.value = e instanceof Error ? e.message : String(e)
   if (errorTimer) clearTimeout(errorTimer)
@@ -97,12 +153,24 @@ function flashError(e: unknown): void {
 }
 
 async function refresh(): Promise<void> {
-  const [scheduled, unscheduled] = await Promise.all([
-    window.api.todos.scheduled(weekStart.value, weekEnd.value),
-    window.api.todos.unscheduled()
-  ])
-  weekTodos.value = scheduled
-  backlog.value = unscheduled
+  const seq = ++refreshSeq
+  try {
+    const [scheduled, unscheduled, all, daySegments, dayJournals] = await Promise.all([
+      window.api.todos.scheduled(weekStart.value, weekEnd.value),
+      window.api.todos.unscheduled(),
+      window.api.todos.list(),
+      window.api.segments.list(day.value),
+      window.api.journal.list(day.value)
+    ])
+    if (seq !== refreshSeq) return
+    weekTodos.value = scheduled
+    backlog.value = unscheduled
+    allTodos.value = all
+    segments.value = daySegments
+    journals.value = dayJournals
+  } catch (e) {
+    if (seq === refreshSeq) flashError(e)
+  }
 }
 
 function shiftDay(delta: number): void {
@@ -126,15 +194,30 @@ function onDayInput(e: Event): void {
   if (v) day.value = v
 }
 
-function openEditor(t: Todo): void {
-  editing.value = t
+function openTodo(t: Todo): void {
+  editingTodo.value = t
+}
+
+function openSegment(s: Segment): void {
+  editingSegment.value = s
+}
+
+function openJournal(e: JournalEntry): void {
+  editingJournal.value = e
 }
 
 function findTodo(id: string): Todo | undefined {
-  return weekTodos.value.find((t) => t.id === id) ?? backlog.value.find((t) => t.id === id)
+  return (
+    weekTodos.value.find((t) => t.id === id) ??
+    backlog.value.find((t) => t.id === id) ??
+    allTodos.value.find((t) => t.id === id)
+  )
 }
 
-async function assign(id: string, slot: { plannedDate: string | null; plannedStart: string | null; plannedEnd: string | null }): Promise<void> {
+async function assign(
+  id: string,
+  slot: { plannedDate: string | null; plannedStart: string | null; plannedEnd: string | null }
+): Promise<void> {
   try {
     await window.api.todos.schedule(id, slot)
     await refresh()
@@ -167,16 +250,11 @@ function onDragEnd(): void {
   dragId.value = null
 }
 
-async function onTimelineDrop(e: DragEvent): Promise<void> {
-  e.preventDefault()
+async function onTimelineDrop(minutes: number): Promise<void> {
   const id = dragId.value
   dragId.value = null
   if (!id) return
-  const el = timelineEl.value
-  if (!el) return
-  const rect = el.getBoundingClientRect()
-  const raw = range.value.startMin + (e.clientY - rect.top) / PX_PER_MIN
-  const start = Math.min(snapMinutes(raw, SNAP), 1440 - SNAP)
+  const start = Math.min(snapMinutes(minutes, SNAP), 1440 - SNAP)
   const end = Math.min(start + Math.max(SNAP, dragDuration.value), 1439)
   await assign(id, {
     plannedDate: day.value,
@@ -208,51 +286,11 @@ async function onWeekDrop(target: string, e: DragEvent): Promise<void> {
   day.value = target
 }
 
-function blockStyle(b: PositionedBlock): Record<string, string> {
-  const preview = resizePreview.value?.id === b.todo.id ? resizePreview.value : null
-  const endMin = preview ? preview.endMin : b.endMin
-  const top = (b.startMin - range.value.startMin) * PX_PER_MIN
-  const height = Math.max(24, (endMin - b.startMin) * PX_PER_MIN)
-  const width = 100 / b.lanes
-  return {
-    top: `${top}px`,
-    height: `${height}px`,
-    left: `calc(${b.lane * width}% + 2px)`,
-    width: `calc(${width}% - 4px)`
-  }
-}
-
-function startResize(t: Todo, e: PointerEvent): void {
-  e.preventDefault()
-  e.stopPropagation()
-  const b = blocks.value.find((x) => x.todo.id === t.id)
-  if (!b) return
-  resizing.value = { id: t.id, startMin: b.startMin, endMin: b.endMin, startY: e.clientY }
-  resizePreview.value = { id: t.id, endMin: b.endMin }
-  window.addEventListener('pointermove', onResizeMove)
-  window.addEventListener('pointerup', stopResize, { once: true })
-  window.addEventListener('pointercancel', stopResize, { once: true })
-}
-
-function onResizeMove(e: PointerEvent): void {
-  const r = resizing.value
-  if (!r) return
-  const delta = (e.clientY - r.startY) / PX_PER_MIN
-  const end = Math.max(r.startMin + SNAP, Math.min(1439, snapMinutes(r.endMin + delta, SNAP)))
-  resizePreview.value = { id: r.id, endMin: end }
-}
-
-async function stopResize(): Promise<void> {
-  window.removeEventListener('pointermove', onResizeMove)
-  const r = resizing.value
-  const preview = resizePreview.value
-  resizing.value = null
-  resizePreview.value = null
-  if (!r || !preview) return
-  await assign(r.id, {
+async function onReschedule(todo: Todo, startMin: number, endMin: number): Promise<void> {
+  await assign(todo.id, {
     plannedDate: day.value,
-    plannedStart: minutesToTime(r.startMin),
-    plannedEnd: minutesToTime(preview.endMin)
+    plannedStart: minutesToTime(startMin),
+    plannedEnd: minutesToTime(endMin)
   })
 }
 
@@ -260,21 +298,48 @@ function onEditorUpdated(): void {
   void refresh()
 }
 
+function onChildSaved(): void {
+  void refresh()
+}
+
+function onMediaChange(): void {
+  narrow.value = mediaQuery?.matches ?? false
+}
+
+function onVisibility(): void {
+  if (document.hidden) return
+  now.value = new Date()
+  void refresh()
+}
+
 watch(day, () => void refresh())
 
 onMounted(async () => {
+  mediaQuery = window.matchMedia('(max-width: 899px)')
+  narrow.value = mediaQuery.matches
+  mediaQuery.addEventListener('change', onMediaChange)
+  document.addEventListener('visibilitychange', onVisibility)
+  offTodos = window.api.todos.onChanged(() => {
+    void refresh()
+  })
+  void window.api.tracker
+    .getStatus()
+    .then((s) => (tracking.value = s))
+    .catch(() => {})
   await refresh()
   tickTimer = setInterval(() => {
+    if (document.hidden) return
     now.value = new Date()
+    void refresh()
   }, 60000)
 })
 
 onBeforeUnmount(() => {
   if (tickTimer) clearInterval(tickTimer)
   if (errorTimer) clearTimeout(errorTimer)
-  window.removeEventListener('pointermove', onResizeMove)
-  window.removeEventListener('pointerup', stopResize)
-  window.removeEventListener('pointercancel', stopResize)
+  mediaQuery?.removeEventListener('change', onMediaChange)
+  document.removeEventListener('visibilitychange', onVisibility)
+  if (offTodos) offTodos()
 })
 </script>
 
@@ -324,7 +389,7 @@ onBeforeUnmount(() => {
             draggable="true"
             @dragstart="onDragStart(t, $event)"
             @dragend="onDragEnd"
-            @click="openEditor(t)"
+            @click="openTodo(t)"
           >
             <input
               class="check"
@@ -335,69 +400,70 @@ onBeforeUnmount(() => {
             <span class="title" :class="{ strikethrough: !!t.completedAt }">{{ t.title }}</span>
             <span v-if="isOverdue(t)" class="overdue-tag">超期</span>
           </article>
-          <p v-if="untimedTodos.length === 0" class="muted hint">把待办拖到这里，安排到当天</p>
-        </div>
-
-        <div class="timeline-wrap">
-          <div class="hours" :style="{ height: gridHeight + 'px' }">
-            <span
-              v-for="m in hourMarks"
-              :key="m"
-              class="hour-label"
-              :style="{ top: (m - range.startMin) * PX_PER_MIN + 'px' }"
-            >
-              {{ minutesToTime(m) }}
-            </span>
-          </div>
-          <div
-            ref="timelineEl"
-            class="timeline"
-            :style="{ height: gridHeight + 'px' }"
-            @dragover.prevent
-            @drop="onTimelineDrop"
+          <article
+            v-for="e in untimedJournals"
+            :key="e.id"
+            class="untimed-item journal"
+            @click="openJournal(e)"
           >
-            <div
-              v-for="m in hourMarks"
-              :key="m"
-              class="hour-line"
-              :style="{ top: (m - range.startMin) * PX_PER_MIN + 'px' }"
-            ></div>
-            <div v-if="nowLineTop !== null" class="now-line" :style="{ top: (nowLineTop ?? 0) + 'px' }"></div>
-
-            <article
-              v-for="b in blocks"
-              :key="b.todo.id"
-              class="block"
-              :class="{
-                done: !!b.todo.completedAt,
-                overdue: isOverdue(b.todo),
-                dragging: dragId === b.todo.id
-              }"
-              :style="blockStyle(b)"
-              draggable="true"
-              @dragstart="onDragStart(b.todo, $event)"
-              @dragend="onDragEnd"
-              @click="openEditor(b.todo)"
-            >
-              <div class="block-time">{{ b.todo.plannedStart }}–{{ b.todo.plannedEnd }}</div>
-              <div class="block-title" :class="{ strikethrough: !!b.todo.completedAt }">
-                {{ b.todo.title }}
-              </div>
-              <div v-if="isOverdue(b.todo)" class="block-overdue">超期</div>
-              <div
-                class="resize-handle"
-                draggable="false"
-                title="拖动调整结束时间"
-                @pointerdown="startResize(b.todo, $event)"
-                @click.stop
-              ></div>
-            </article>
-
-            <p v-if="blocks.length === 0" class="timeline-empty muted">
-              把「待安排」拖到时间轴，或拖到上方全天区
-            </p>
-          </div>
+            <span class="kind">日志</span>
+            <span class="title">{{ journalHead(e) }}</span>
+          </article>
+          <p v-if="untimedTodos.length === 0 && untimedJournals.length === 0" class="muted hint">
+            把待办拖到这里，安排到当天
+          </p>
         </div>
+
+        <div class="toolbar">
+          <div v-if="narrow" class="segmented">
+            <button :class="{ active: narrowTrack === 'plan' }" @click="narrowTrack = 'plan'">计划</button>
+            <button :class="{ active: narrowTrack === 'actual' }" @click="narrowTrack = 'actual'">实际</button>
+            <button :class="{ active: narrowTrack === 'journal' }" @click="narrowTrack = 'journal'">日志</button>
+          </div>
+          <span v-else></span>
+          <label class="idle-toggle">
+            <input v-model="hideIdle" type="checkbox" />
+            <span>隐藏空闲</span>
+          </label>
+        </div>
+
+        <DayTimeline
+          :range="range"
+          :now-line-top="nowLineTop"
+          :show-plan="showPlan"
+          :show-actual="showActual"
+          :show-journal="showJournal"
+          @drop-minutes="onTimelineDrop"
+        >
+          <template #plan>
+            <PlanTrack
+              :blocks="planBlocks"
+              :actual-ms="actualMs"
+              :range="range"
+              :now="now"
+              @open="openTodo"
+              @drag-start="onDragStart"
+              @drag-end="onDragEnd"
+              @reschedule="onReschedule"
+            />
+          </template>
+          <template #actual>
+            <ActualTrack
+              :blocks="visibleActualBlocks"
+              :range="range"
+              :empty-hint="actualEmptyHint"
+              @open-segment="openSegment"
+            />
+          </template>
+          <template #journal>
+            <JournalTrack
+              :items="timedJournals"
+              :range="range"
+              :narrow="narrow"
+              @open="openJournal"
+            />
+          </template>
+        </DayTimeline>
       </section>
 
       <aside class="backlog">
@@ -415,11 +481,11 @@ onBeforeUnmount(() => {
           draggable="true"
           @dragstart="onDragStart(t, $event)"
           @dragend="onDragEnd"
-          @click="openEditor(t)"
+          @click="openTodo(t)"
         >
           <span class="drag-dots">⠿</span>
           <span class="title">{{ t.title }}</span>
-          <button class="ghost sm" @click.stop="openEditor(t)">安排</button>
+          <button class="ghost sm" @click.stop="openTodo(t)">安排</button>
         </article>
         <p v-if="backlog.length === 0" class="muted empty">没有未安排的待办</p>
         <p v-else-if="filteredBacklog.length === 0" class="muted empty">没有匹配的待办</p>
@@ -427,18 +493,34 @@ onBeforeUnmount(() => {
     </div>
 
     <ScheduleEditor
-      v-if="editing"
-      :todo="editing"
+      v-if="editingTodo"
+      :todo="editingTodo"
       :default-date="day"
       @updated="onEditorUpdated"
-      @close="editing = null"
+      @close="editingTodo = null"
+    />
+
+    <SegmentEditor
+      v-if="editingSegment"
+      :segment="editingSegment"
+      :todos="allTodos"
+      @saved="onChildSaved"
+      @close="editingSegment = null"
+    />
+
+    <JournalEditor
+      v-if="editingJournal"
+      :entry="editingJournal"
+      :default-date="day"
+      @saved="onChildSaved"
+      @close="editingJournal = null"
     />
   </div>
 </template>
 
 <style scoped>
 .page {
-  max-width: 1000px;
+  max-width: 1280px;
   margin: 0 auto;
   padding: 16px;
 }
@@ -513,11 +595,11 @@ onBeforeUnmount(() => {
 }
 .board {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-columns: minmax(0, 1fr) 260px;
   gap: 14px;
   align-items: start;
 }
-@media (max-width: 760px) {
+@media (max-width: 899px) {
   .board {
     grid-template-columns: 1fr;
   }
@@ -530,7 +612,7 @@ onBeforeUnmount(() => {
   border: 1px dashed var(--border);
   border-radius: 8px;
   padding: 8px 10px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   min-height: 54px;
 }
 .untimed-zone h2,
@@ -560,6 +642,14 @@ onBeforeUnmount(() => {
 .untimed-item.done {
   opacity: 0.6;
 }
+.untimed-item.journal .kind {
+  font-size: 10px;
+  color: #b58cff;
+  border: 1px solid #b58cff;
+  border-radius: 8px;
+  padding: 0 5px;
+  flex-shrink: 0;
+}
 .overdue {
   color: var(--danger);
 }
@@ -571,104 +661,43 @@ onBeforeUnmount(() => {
   padding: 0 5px;
   flex-shrink: 0;
 }
-.timeline-wrap {
+.toolbar {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  min-height: 28px;
 }
-.hours {
-  position: relative;
-  width: 42px;
-  flex-shrink: 0;
+.segmented {
+  display: flex;
+  gap: 2px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 2px;
 }
-.hour-label {
-  position: absolute;
-  right: 0;
-  transform: translateY(-50%);
-  font-size: 10px;
+.segmented button {
+  border: none;
+  background: transparent;
   color: var(--muted);
-  white-space: nowrap;
+  padding: 3px 12px;
+  border-radius: 5px;
 }
-.timeline {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  border-left: 1px solid var(--border);
-}
-.hour-line {
-  position: absolute;
-  left: 0;
-  right: 0;
-  border-top: 1px solid var(--border);
-  opacity: 0.5;
-  pointer-events: none;
-}
-.now-line {
-  position: absolute;
-  left: 0;
-  right: 0;
-  border-top: 2px solid var(--danger);
-  z-index: 3;
-  pointer-events: none;
-}
-.block {
-  position: absolute;
-  z-index: 2;
+.segmented button.active {
   background: var(--accent-soft);
-  border: 1px solid var(--accent);
-  border-left-width: 3px;
-  border-radius: 6px;
-  padding: 3px 6px;
-  overflow: hidden;
-  cursor: pointer;
+  color: var(--text);
+}
+.idle-toggle {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.block:hover {
-  background: rgba(74, 158, 255, 0.25);
-}
-.block.dragging {
-  opacity: 0.4;
-}
-.block.done {
-  opacity: 0.55;
-  border-color: var(--done);
-  background: rgba(107, 158, 107, 0.12);
-}
-.block.overdue {
-  border-color: var(--danger);
-  background: rgba(255, 107, 107, 0.12);
-}
-.block-time {
-  font-size: 10px;
-  color: var(--muted);
-  flex-shrink: 0;
-}
-.block-title {
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--muted);
+  cursor: pointer;
 }
-.block-overdue {
-  font-size: 10px;
-  color: var(--danger);
-  flex-shrink: 0;
-}
-.resize-handle {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 7px;
-  cursor: ns-resize;
-}
-.timeline-empty {
-  position: absolute;
-  top: 10px;
-  left: 8px;
-  right: 8px;
-  pointer-events: none;
+.idle-toggle input {
+  width: auto;
 }
 .backlog {
   background: var(--panel);

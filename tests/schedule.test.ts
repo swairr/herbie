@@ -12,6 +12,7 @@ import {
   weekdayLabel,
   layoutDay,
   gridRange,
+  expandGridRange,
   DEFAULT_GRID_START_MIN,
   DEFAULT_GRID_END_MIN
 } from '@shared/schedule'
@@ -187,6 +188,13 @@ describe('gridRange', () => {
   it('always keeps at least one hour', () => {
     expect(gridRange([todo({ plannedStart: '10:00', plannedEnd: '10:15' })])).toEqual({
       startMin: DEFAULT_GRID_START_MIN,
+      endMin: DEFAULT_GRID_END_MIN
+    })
+  })
+
+  it('expands for point intervals such as timed journal entries', () => {
+    expect(expandGridRange([{ startMin: 5 * 60 + 10, endMin: 5 * 60 + 10 }])).toEqual({
+      startMin: 5 * 60,
       endMin: DEFAULT_GRID_END_MIN
     })
   })

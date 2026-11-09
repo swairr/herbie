@@ -3,18 +3,14 @@ import { computed, onMounted, ref } from 'vue'
 import type { Segment, Todo } from '@shared/types'
 import { formatLocalShort, localDateString, formatDuration, durationMs } from '@shared/time'
 import { aggregateByProcess, aggregateByTodo, aggregateIdle } from '@shared/segments-agg'
+import SegmentEditor from '../components/SegmentEditor.vue'
 
 const segments = ref<Segment[]>([])
 const todos = ref<Todo[]>([])
 const day = ref(todayLocal())
 const exporting = ref(false)
 const lastExport = ref<string | null>(null)
-
-const editingId = ref<string | null>(null)
-const editNote = ref('')
-const editTodoId = ref<string | null>(null)
-const todoQuery = ref('')
-const todoMenuOpen = ref(false)
+const editing = ref<Segment | null>(null)
 
 function todayLocal(): string {
   return localDateString(new Date().toISOString())
@@ -30,19 +26,10 @@ const procRows = computed(() => aggregateByProcess(segments.value))
 const todoRows = computed(() => aggregateByTodo(segments.value, todoTitles.value))
 const idleMs = computed(() => aggregateIdle(segments.value))
 
-const filteredTodoOptions = computed(() => {
-  const q = todoQuery.value.trim().toLowerCase()
-  const list = q
-    ? todos.value.filter((t) => t.title.toLowerCase().includes(q))
-    : todos.value
-  return list.slice(0, 20)
-})
-
 function shiftDay(delta: number): void {
   const [y, m, d] = day.value.split('-').map(Number)
   const next = new Date(y, m - 1, d + delta, 12, 0, 0, 0)
-  const iso = next.toISOString()
-  day.value = localDateString(iso)
+  day.value = localDateString(next.toISOString())
   void refresh()
 }
 
@@ -59,39 +46,6 @@ async function refresh(): Promise<void> {
   if (todos.value.length === 0) {
     todos.value = await window.api.todos.list()
   }
-}
-
-function openEdit(s: Segment): void {
-  editingId.value = s.id
-  editNote.value = s.note
-  editTodoId.value = s.todoId
-  todoQuery.value = s.todoId ? todoTitles.value[s.todoId] ?? '' : ''
-  todoMenuOpen.value = false
-}
-
-function cancelEdit(): void {
-  editingId.value = null
-}
-
-async function saveEdit(): Promise<void> {
-  if (!editingId.value) return
-  await window.api.segments.update(editingId.value, {
-    note: editNote.value,
-    todoId: editTodoId.value
-  })
-  editingId.value = null
-  await refresh()
-}
-
-function pickTodo(t: Todo): void {
-  editTodoId.value = t.id
-  todoQuery.value = t.title
-  todoMenuOpen.value = false
-}
-
-function clearTodo(): void {
-  editTodoId.value = null
-  todoQuery.value = ''
 }
 
 function segDuration(s: Segment): string {
@@ -120,6 +74,10 @@ async function doExport(): Promise<void> {
 
 function goSettings(): void {
   location.hash = '#/settings'
+}
+
+function onSaved(): void {
+  void refresh()
 }
 
 onMounted(refresh)
@@ -183,7 +141,7 @@ onMounted(refresh)
         :key="s.id"
         class="seg"
         :class="{ idle: s.kind === 'idle' }"
-        @click="openEdit(s)"
+        @click="editing = s"
       >
         <div class="seg-time">
           {{ formatLocalShort(s.startAt) }} – {{ s.endAt ? formatLocalShort(s.endAt) : '进行中' }}
@@ -200,29 +158,13 @@ onMounted(refresh)
       <p v-if="segments.length === 0" class="muted empty">当日暂无片段</p>
     </section>
 
-    <div v-if="editingId" class="overlay" @click.self="cancelEdit">
-      <div class="modal">
-        <h3>编辑片段</h3>
-        <label class="field">
-          <span>备注</span>
-          <textarea v-model="editNote" spellcheck="false" rows="3" placeholder="为这段时间加一句说明"></textarea>
-        </label>
-        <label class="field">
-          <span>关联 Todo</span>
-          <input v-model="todoQuery" spellcheck="false" placeholder="搜索 Todo…" @focus="todoMenuOpen = true" />
-          <div v-if="todoMenuOpen" class="todo-menu">
-            <button v-for="t in filteredTodoOptions" :key="t.id" @click="pickTodo(t)">
-              {{ t.title }}
-            </button>
-            <button class="ghost clear" @click="clearTodo">取消关联</button>
-          </div>
-        </label>
-        <div class="modal-actions">
-          <button class="ghost" @click="cancelEdit">取消</button>
-          <button class="primary" @click="saveEdit">保存</button>
-        </div>
-      </div>
-    </div>
+    <SegmentEditor
+      v-if="editing"
+      :segment="editing"
+      :todos="todos"
+      @saved="onSaved"
+      @close="editing = null"
+    />
   </div>
 </template>
 
@@ -371,73 +313,5 @@ th {
 .empty {
   text-align: center;
   padding: 20px 0;
-}
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-.modal {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 16px;
-  width: 420px;
-  max-width: 92vw;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.modal h3 {
-  margin: 0;
-  font-size: 15px;
-}
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  position: relative;
-}
-.field > span {
-  font-size: 12px;
-  color: var(--muted);
-}
-.todo-menu {
-  position: absolute;
-  bottom: 36px;
-  left: 0;
-  right: 0;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  max-height: 200px;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  z-index: 60;
-}
-.todo-menu button {
-  border: none;
-  border-radius: 0;
-  text-align: left;
-  background: transparent;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.todo-menu button:hover {
-  background: var(--accent-soft);
-}
-.todo-menu .clear {
-  color: var(--danger);
-}
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
 }
 </style>

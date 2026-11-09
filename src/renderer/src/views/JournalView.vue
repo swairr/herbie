@@ -3,20 +3,14 @@ import { onMounted, ref } from 'vue'
 import type { JournalEntry } from '@shared/types'
 import { formatLocalShort, localDateString } from '@shared/time'
 import { parseLabels } from '@shared/labels'
+import JournalEditor from '../components/JournalEditor.vue'
 
 const entries = ref<JournalEntry[]>([])
 const day = ref(todayLocal())
 const exporting = ref(false)
 const lastExport = ref<string | null>(null)
-
-interface EditorState {
-  id: string | null
-  title: string
-  body: string
-  date: string
-}
-const editor = ref<EditorState | null>(null)
-const saveError = ref<string | null>(null)
+const editorOpen = ref(false)
+const editingEntry = ref<JournalEntry | null>(null)
 
 function todayLocal(): string {
   return localDateString(new Date().toISOString())
@@ -42,38 +36,13 @@ async function refresh(): Promise<void> {
 }
 
 function openCreate(): void {
-  editor.value = { id: null, title: '', body: '', date: day.value }
-  saveError.value = null
+  editingEntry.value = null
+  editorOpen.value = true
 }
 
 function openEdit(e: JournalEntry): void {
-  editor.value = { id: e.id, title: e.title ?? '', body: e.body, date: e.date }
-  saveError.value = null
-}
-
-function closeEditor(): void {
-  editor.value = null
-  saveError.value = null
-}
-
-async function save(): Promise<void> {
-  if (!editor.value) return
-  const { id, title, body, date } = editor.value
-  if (body.trim().length === 0) {
-    saveError.value = '正文不能为空'
-    return
-  }
-  try {
-    if (id) {
-      await window.api.journal.update(id, { title: title || null, body, date })
-    } else {
-      await window.api.journal.create({ title: title || null, body, date })
-    }
-    closeEditor()
-    await refresh()
-  } catch (e) {
-    saveError.value = e instanceof Error ? e.message : String(e)
-  }
+  editingEntry.value = e
+  editorOpen.value = true
 }
 
 async function remove(e: JournalEntry): Promise<void> {
@@ -95,10 +64,6 @@ function labelList(e: JournalEntry): string[] {
   return parseLabels(e.body)
 }
 
-function editorLabelPreview(): string[] {
-  return editor.value ? parseLabels(editor.value.body) : []
-}
-
 async function doExport(): Promise<void> {
   exporting.value = true
   const res = await window.api.journal.export(day.value)
@@ -109,6 +74,10 @@ async function doExport(): Promise<void> {
 
 function goSettings(): void {
   location.hash = '#/settings'
+}
+
+function onSaved(): void {
+  void refresh()
 }
 
 onMounted(refresh)
@@ -144,7 +113,10 @@ onMounted(refresh)
         @click="openEdit(e)"
       >
         <div class="entry-head">
-          <span class="entry-title">{{ entryHead(e) }}</span>
+          <span class="entry-title">
+            <span v-if="e.time" class="entry-time">{{ e.time }}</span>
+            {{ entryHead(e) }}
+          </span>
           <button class="danger sm" @click.stop="remove(e)">删除</button>
         </div>
         <pre v-if="e.title" class="entry-body">{{ e.body }}</pre>
@@ -156,36 +128,13 @@ onMounted(refresh)
       <p v-if="entries.length === 0" class="muted empty">当日暂无日志</p>
     </section>
 
-    <div v-if="editor" class="overlay" @click.self="closeEditor">
-      <div class="modal">
-        <h3>{{ editor.id ? '编辑日志' : '新建日志' }}</h3>
-        <label class="field">
-          <span>标题（可选）</span>
-          <input v-model="editor.title" spellcheck="false" placeholder="无标题则以正文首行展示" />
-        </label>
-        <label class="field">
-          <span>正文（必填）</span>
-          <textarea
-            v-model="editor.body"
-            spellcheck="false"
-            rows="8"
-            placeholder="记录思考、会议纪要…#标签 自动识别"
-          ></textarea>
-          <span v-if="editorLabelPreview().length" class="hint">
-            将解析标签：{{ editorLabelPreview().join(', ') }}
-          </span>
-        </label>
-        <label class="field">
-          <span>归属日</span>
-          <input type="date" v-model="editor.date" />
-        </label>
-        <p v-if="saveError" class="error">{{ saveError }}</p>
-        <div class="modal-actions">
-          <button class="ghost" @click="closeEditor">取消</button>
-          <button class="primary" @click="save">保存</button>
-        </div>
-      </div>
-    </div>
+    <JournalEditor
+      v-if="editorOpen"
+      :entry="editingEntry"
+      :default-date="day"
+      @saved="onSaved"
+      @close="editorOpen = false"
+    />
   </div>
 </template>
 
@@ -255,6 +204,12 @@ onMounted(refresh)
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.entry-time {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #b58cff;
+  margin-right: 4px;
+}
 .entry-body {
   margin: 0;
   font-family: inherit;
@@ -294,54 +249,5 @@ onMounted(refresh)
 .empty {
   text-align: center;
   padding: 20px 0;
-}
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-.modal {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 16px;
-  width: 520px;
-  max-width: 92vw;
-  max-height: 88vh;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.modal h3 {
-  margin: 0;
-  font-size: 15px;
-}
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.field > span {
-  font-size: 12px;
-  color: var(--muted);
-}
-.hint {
-  font-size: 11px;
-  color: var(--muted);
-}
-.error {
-  color: var(--danger);
-  font-size: 12px;
-  margin: 0;
-}
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
 }
 </style>

@@ -154,22 +154,20 @@ export interface PositionedBlock {
   lanes: number
 }
 
-/**
- * 计算当天有时间段待办的时间轴布局:按开始时间排序,重叠簇内贪心分配列,
- * 同一簇内所有块共享列数,保证左右分栏互不遮挡。
- */
-export function layoutDay(todos: Todo[]): PositionedBlock[] {
-  const items: { todo: Todo; startMin: number; endMin: number }[] = []
-  for (const todo of todos) {
-    const startMin = timeToMinutes(todo.plannedStart)
-    const endMin = timeToMinutes(todo.plannedEnd)
-    if (startMin === null || endMin === null || endMin <= startMin) continue
-    items.push({ todo, startMin, endMin })
-  }
-  items.sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin)
+/** 时间轴上的分钟区间;无时长条目(如日志)可令 `endMin === startMin`。 */
+export interface MinuteRange {
+  startMin: number
+  endMin: number
+}
 
-  const out: PositionedBlock[] = []
-  let cluster: typeof items = []
+/**
+ * 通用重叠布局:按开始时间排序,重叠簇内贪心分配列,同一簇内所有块共享列数,
+ * 保证左右分栏互不遮挡。计划块与活动聚合块共用这一规则。
+ */
+export function layoutRanges<T extends MinuteRange>(items: T[]): (T & { lane: number; lanes: number })[] {
+  const sorted = [...items].sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin)
+  const out: (T & { lane: number; lanes: number })[] = []
+  let cluster: T[] = []
   let clusterEnd = -1
 
   function flush(): void {
@@ -193,7 +191,7 @@ export function layoutDay(todos: Todo[]): PositionedBlock[] {
     clusterEnd = -1
   }
 
-  for (const item of items) {
+  for (const item of sorted) {
     if (cluster.length > 0 && item.startMin >= clusterEnd) flush()
     cluster.push(item)
     clusterEnd = Math.max(clusterEnd, item.endMin)
@@ -202,17 +200,46 @@ export function layoutDay(todos: Todo[]): PositionedBlock[] {
   return out
 }
 
-/** 时间轴展示范围:默认 06:00–24:00,按最早开始/最晚结束向外扩展并取整到小时。 */
-export function gridRange(todos: Todo[]): { startMin: number; endMin: number } {
+/**
+ * 计算当天有时间段待办的时间轴布局。
+ */
+export function layoutDay(todos: Todo[]): PositionedBlock[] {
+  const items: { todo: Todo; startMin: number; endMin: number }[] = []
+  for (const todo of todos) {
+    const startMin = timeToMinutes(todo.plannedStart)
+    const endMin = timeToMinutes(todo.plannedEnd)
+    if (startMin === null || endMin === null || endMin <= startMin) continue
+    items.push({ todo, startMin, endMin })
+  }
+  return layoutRanges(items)
+}
+
+/**
+ * 时间轴展示范围:默认 06:00–24:00,按传入区间的最早开始/最晚结束向外扩展,
+ * 并取整到小时。日志等无时长条目可传 `endMin = startMin`。
+ */
+export function expandGridRange(intervals: MinuteRange[]): { startMin: number; endMin: number } {
   let start = DEFAULT_GRID_START_MIN
   let end = DEFAULT_GRID_END_MIN
-  for (const todo of todos) {
-    const s = timeToMinutes(todo.plannedStart)
-    const e = timeToMinutes(todo.plannedEnd)
-    if (s !== null) start = Math.min(start, Math.floor(s / 60) * 60)
-    if (e !== null) end = Math.max(end, Math.ceil(e / 60) * 60)
+  for (const item of intervals) {
+    if (!Number.isFinite(item.startMin)) continue
+    start = Math.min(start, Math.floor(item.startMin / 60) * 60)
+    const itemEnd = Number.isFinite(item.endMin) ? item.endMin : item.startMin
+    end = Math.max(end, Math.ceil(itemEnd / 60) * 60)
   }
   start = Math.max(0, start)
   end = Math.min(24 * 60, Math.max(end, start + 60))
   return { startMin: start, endMin: end }
+}
+
+/** 当天有时间段待办的展示范围(保留旧签名,内部走 `expandGridRange`)。 */
+export function gridRange(todos: Todo[]): { startMin: number; endMin: number } {
+  const intervals: MinuteRange[] = []
+  for (const todo of todos) {
+    const s = timeToMinutes(todo.plannedStart)
+    const e = timeToMinutes(todo.plannedEnd)
+    if (s === null) continue
+    intervals.push({ startMin: s, endMin: e ?? s })
+  }
+  return expandGridRange(intervals)
 }

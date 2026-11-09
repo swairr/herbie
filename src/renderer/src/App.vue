@@ -14,7 +14,8 @@ const tracking = ref<TrackingStatus | null>(null)
 
 function getRoute(): string {
   const h = location.hash.replace(/^#\/?/, '')
-  return h || 'main'
+  // 日程是默认首页(日程以本地自然日为锚点,ADR 0006)。
+  return h || 'schedule'
 }
 
 onMounted(() => {
