@@ -126,6 +126,8 @@ export interface JournalEntry {
   title: string | null
   body: string
   date: string
+  /** 可选本地墙钟 `HH:MM`(ADR 0007);null 表示不定位到具体时刻,归入「全天」。 */
+  time: string | null
   createdAt: string
   updatedAt: string
   deletedAt: string | null
@@ -135,12 +137,15 @@ export interface JournalInput {
   title?: string | null
   body: string
   date?: string
+  time?: string | null
 }
 
 export interface JournalPatch {
   title?: string | null
   body?: string
   date?: string
+  /** 三态:缺省 = 不改,null = 清空,字符串 = 设置。 */
+  time?: string | null
 }
 
 export interface JournalExportResult extends ExportResult {

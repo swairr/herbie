@@ -12,6 +12,8 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::time::normalize_time_of_day;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Todo {
@@ -306,17 +308,6 @@ pub fn move_todo(conn: &mut Connection, id: &str, before: Option<&str>) -> Resul
     .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     fetch_todo(conn, id).map_err(|e| e.to_string())
-}
-
-/// 把 `HH:MM` / `H:MM` 规范化为两位补零的 `HH:MM`;非法返回 None。
-fn normalize_time_of_day(raw: &str) -> Option<String> {
-    let (h, m) = raw.trim().split_once(':')?;
-    let h: u32 = h.parse().ok()?;
-    let m: u32 = m.parse().ok()?;
-    if h > 23 || m > 59 {
-        return None;
-    }
-    Some(format!("{:02}:{:02}", h, m))
 }
 
 fn minutes_of_day(raw: &str) -> u32 {

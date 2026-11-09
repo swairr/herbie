@@ -113,6 +113,25 @@ fn ms_to_iso_utc(ms: i64) -> String {
         .to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
+/// `HH:MM` / `H:MM` 本地墙钟 → 零填充 `HH:MM`;非法返回 `None`。
+/// 日程计划(`todos.plannedStart/End`)与日志(`journal_entries.time`)共用同一规范化。
+pub fn normalize_time_of_day(raw: &str) -> Option<String> {
+    let (h, m) = raw.trim().split_once(':')?;
+    let h: u32 = h.parse().ok()?;
+    let m: u32 = m.parse().ok()?;
+    if h > 23 || m > 59 {
+        return None;
+    }
+    Some(format!("{:02}:{:02}", h, m))
+}
+
+/// ISO 瞬时 → 运行时本地时区的墙钟 `HH:MM`(等价 JS `localTimeOfDay`)。
+pub fn local_hhmm(iso: &str) -> Option<String> {
+    let ms = parse_iso_to_ms(iso)?;
+    let dt = Local.timestamp_millis_opt(ms).single()?;
+    Some(dt.format("%H:%M").to_string())
+}
+
 /// 统一「当前时刻/任意瞬时」的存储格式:UTC、毫秒、`Z` 后缀(等价 JS `toISOString`,
 /// 亦即 `todos::now_iso`)。全库唯一格式化入口,避免多处内联漂移破坏按字典序的时间预筛。
 pub fn iso_utc_z_millis(dt: DateTime<Utc>) -> String {
@@ -346,5 +365,29 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn normalizes_wall_clock_times_to_zero_padded_hh_mm() {
+        assert_eq!(normalize_time_of_day("09:30").as_deref(), Some("09:30"));
+        assert_eq!(normalize_time_of_day(" 9:05 ").as_deref(), Some("09:05"));
+        assert_eq!(normalize_time_of_day("00:00").as_deref(), Some("00:00"));
+        assert_eq!(normalize_time_of_day("23:59").as_deref(), Some("23:59"));
+        assert!(normalize_time_of_day("24:00").is_none());
+        assert!(normalize_time_of_day("09:60").is_none());
+        assert!(normalize_time_of_day("9").is_none());
+        assert!(normalize_time_of_day("").is_none());
+    }
+
+    #[test]
+    fn formats_an_iso_instant_as_local_wall_clock_hh_mm() {
+        let iso = iso_utc_z_millis(Utc.with_ymd_and_hms(2026, 11, 9, 6, 7, 0).unwrap());
+        let expected = Local
+            .timestamp_millis_opt(parse_iso_to_ms(&iso).unwrap())
+            .unwrap()
+            .format("%H:%M")
+            .to_string();
+        assert_eq!(local_hhmm(&iso).as_deref(), Some(expected.as_str()));
+        assert!(local_hhmm("not-an-instant").is_none());
     }
 }

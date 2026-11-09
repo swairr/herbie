@@ -13,10 +13,11 @@
 
 use chrono::Utc;
 use rusqlite::{params, Connection, Row};
+use serde::de::Error as DeError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::time::{day_bounds, local_date_string};
+use crate::time::{day_bounds, local_date_string, local_hhmm, normalize_time_of_day};
 use crate::todos::now_iso;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -26,6 +27,8 @@ pub struct JournalEntry {
     pub title: Option<String>,
     pub body: String,
     pub date: String,
+    /// 可选本地墙钟 `HH:MM`(ADR 0007);`None` 表示全天区条目。
+    pub time: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
@@ -38,11 +41,14 @@ pub struct JournalInput {
     pub title: Option<String>,
     pub body: Option<String>,
     pub date: Option<String>,
+    #[serde(default)]
+    pub time: Option<String>,
 }
 
-/// `JournalPatch` 对齐 TS `{ title?: string | null; body?: string; date?: string }`。
+/// `JournalPatch` 对齐 TS
+/// `{ title?: string | null; body?: string; date?: string; time?: string | null }`。
 ///
-/// `title` 用 **`Option<Option<String>>`** 表示三种语义:
+/// `title` / `time` 用 **`Option<Option<String>>`** 表示三种语义:
 /// - 外层 `None`:patch 未带 `title` 字段 → **保持原值**;
 /// - `Some(None)`:前端显式传 `title: null`(或空串)→ **置空**(title = NULL);
 /// - `Some(Some(x))`:传 `title: "x"` → **设值**(trim 后)。
@@ -50,6 +56,7 @@ pub struct JournalInput {
 /// serde 对标准 `Option<Option<T>>` 不区分 JSON `null` 与缺省字段(两者都映射为外层 None),
 /// 故此处用 `#[serde(default)]`(缺省 → None 不调 deserializer)+ 自定义 deserializer
 /// (到场值 `null`/空串 → `Some(None)`,非空串 trim 后 → `Some(Some(x))`)补齐三态。
+/// `time` 的到场值额外规范化为 `HH:MM`,非法值在反序列化阶段即报错。
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct JournalPatch {
@@ -57,6 +64,8 @@ pub struct JournalPatch {
     pub title: Option<Option<String>>,
     pub body: Option<String>,
     pub date: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_time")]
+    pub time: Option<Option<String>>,
 }
 
 fn deserialize_title<'de, D>(d: D) -> Result<Option<Option<String>>, D::Error>
@@ -80,12 +89,35 @@ where
     })
 }
 
+/// `time` 三态与 `title` 同构,但到场值要做 `HH:MM` 规范化;非法值让 serde 反序列化直接报错
+/// (与 `todos_schedule` 对非法 `plannedStart` 的处理一致)。
+fn deserialize_time<'de, D>(d: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = Option::<String>::deserialize(d)?;
+    Ok(match v {
+        None => Some(None),
+        Some(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                Some(None)
+            } else {
+                let normalized = normalize_time_of_day(t)
+                    .ok_or_else(|| D::Error::custom(format!("invalid time: {t}")))?;
+                Some(Some(normalized))
+            }
+        }
+    })
+}
+
 fn row_to_journal(r: &Row) -> rusqlite::Result<JournalEntry> {
     Ok(JournalEntry {
         id: r.get("id")?,
         title: r.get("title")?,
         body: r.get("body")?,
         date: r.get("date")?,
+        time: r.get("time")?,
         created_at: r.get("createdAt")?,
         updated_at: r.get("updatedAt")?,
         deleted_at: r.get("deletedAt")?,
@@ -94,21 +126,40 @@ fn row_to_journal(r: &Row) -> rusqlite::Result<JournalEntry> {
 
 fn fetch_journal(conn: &Connection, id: &str) -> rusqlite::Result<JournalEntry> {
     conn.query_row(
-        "SELECT id, title, body, date, createdAt, updatedAt, deletedAt FROM journal_entries WHERE id = ?1",
+        "SELECT id, title, body, date, time, createdAt, updatedAt, deletedAt
+         FROM journal_entries WHERE id = ?1",
         params![id],
         row_to_journal,
     )
 }
 
-/// `listJournals(day)`:`SELECT * WHERE date = ? AND deletedAt IS NULL ORDER BY createdAt ASC`。
+/// 时间线排序键:显式 `time` 优先,否则用 `createdAt` 的本地墙钟时刻(ADR 0007)。
+fn journal_sort_key(e: &JournalEntry) -> String {
+    e.time
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| local_hhmm(&e.created_at))
+        .unwrap_or_default()
+}
+
+/// `listJournals(day)`:`WHERE date = ? AND deletedAt IS NULL`,按「`time` 否则 `createdAt`
+/// 的本地时刻」升序(同键按 `createdAt` 升序),与 `shared/journal-markdown.ts` 的
+/// `compareJournals` 对齐。
 pub fn list_journals(conn: &Connection, day: &str) -> rusqlite::Result<Vec<JournalEntry>> {
     let mut stmt = conn.prepare(
         "SELECT * FROM journal_entries
-         WHERE date = ?1 AND deletedAt IS NULL
-         ORDER BY createdAt ASC",
+         WHERE date = ?1 AND deletedAt IS NULL",
     )?;
     let rows = stmt.query_map(params![day], row_to_journal)?;
-    rows.collect()
+    let mut list: Vec<JournalEntry> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    list.sort_by(|a, b| {
+        journal_sort_key(a)
+            .cmp(&journal_sort_key(b))
+            .then_with(|| a.created_at.cmp(&b.created_at))
+    });
+    Ok(list)
 }
 
 /// `createJournal(input)`:body 空则 Err;date 缺省/空串 → 本地今天;`day_bounds` 校验;
@@ -137,15 +188,22 @@ pub fn create_journal(
             Some(t.to_string())
         }
     };
+    let time: Option<String> = match input.time.as_deref() {
+        Some(raw) if !raw.trim().is_empty() => {
+            let t = raw.trim();
+            Some(normalize_time_of_day(t).ok_or_else(|| format!("invalid time: {t}"))?)
+        }
+        _ => None,
+    };
     let id = Uuid::new_v4().to_string();
     let now = now_iso();
     let labels = crate::labels::parse_labels(body);
     {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         tx.execute(
-            "INSERT INTO journal_entries (id, title, body, date, createdAt, updatedAt, deletedAt)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
-            params![id, title, body, date, &now, &now],
+            "INSERT INTO journal_entries (id, title, body, date, time, createdAt, updatedAt, deletedAt)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)",
+            params![id, title, body, date, time, &now, &now],
         )
         .map_err(|e| e.to_string())?;
         crate::labels_store::update_journal_labels(&tx, &id, &labels).map_err(|e| e.to_string())?;
@@ -180,6 +238,10 @@ pub fn update_journal(
         Some(d) => d.clone(),
         None => existing.date.clone(),
     };
+    let time = match &patch.time {
+        None => existing.time.clone(),
+        Some(t) => t.clone(),
+    };
     if day_bounds(&date).is_none() {
         return Err(format!("invalid date: {date}"));
     }
@@ -188,8 +250,10 @@ pub fn update_journal(
     {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         tx.execute(
-            "UPDATE journal_entries SET title = ?1, body = ?2, date = ?3, updatedAt = ?4 WHERE id = ?5",
-            params![title, body, date, &now, id],
+            "UPDATE journal_entries
+             SET title = ?1, body = ?2, date = ?3, time = ?4, updatedAt = ?5
+             WHERE id = ?6",
+            params![title, body, date, time, &now, id],
         )
         .map_err(|e| e.to_string())?;
         crate::labels_store::update_journal_labels(&tx, id, &labels).map_err(|e| e.to_string())?;
@@ -232,6 +296,7 @@ mod tests {
             title: None,
             body: Some(body.to_string()),
             date: None,
+            time: None,
         }
     }
 
@@ -260,6 +325,7 @@ mod tests {
                 title: Some("  Meeting  ".into()),
                 body: Some("body".into()),
                 date: None,
+                time: None,
             },
         )
         .unwrap();
@@ -270,6 +336,7 @@ mod tests {
                 title: Some("   ".into()),
                 body: Some("body".into()),
                 date: None,
+                time: None,
             },
         )
         .unwrap();
@@ -285,6 +352,7 @@ mod tests {
                 title: None,
                 body: Some("   ".into()),
                 date: None,
+                time: None,
             },
         );
         assert!(res.is_err());
@@ -294,6 +362,7 @@ mod tests {
                 title: None,
                 body: Some(String::new()),
                 date: None,
+                time: None,
             },
         );
         assert!(res2.is_err());
@@ -308,6 +377,7 @@ mod tests {
                 title: None,
                 body: Some("x".into()),
                 date: Some("not-a-date".into()),
+                time: None,
             },
         );
         assert!(res.is_err());
@@ -333,6 +403,7 @@ mod tests {
                 title: None,
                 body: Some("past".into()),
                 date: Some("2020-01-01".into()),
+                time: None,
             },
         )
         .unwrap();
@@ -361,6 +432,7 @@ mod tests {
                 title: None,
                 body: Some("now only #work".into()),
                 date: None,
+                time: None,
             },
         )
         .unwrap();
@@ -379,6 +451,7 @@ mod tests {
                 title: Some(Some("T".into())),
                 body: Some("new #tag".into()),
                 date: Some("2020-06-06".into()),
+                time: None,
             },
         )
         .unwrap();
@@ -400,6 +473,7 @@ mod tests {
                 title: None,
                 body: Some("   ".into()),
                 date: None,
+                time: None,
             },
         );
         assert!(res.is_err());
@@ -414,6 +488,7 @@ mod tests {
                 title: Some("T".into()),
                 body: Some("orig".into()),
                 date: None,
+                time: None,
             },
         )
         .unwrap();
@@ -424,6 +499,7 @@ mod tests {
                 title: Some(None),
                 body: None,
                 date: None,
+                time: None,
             },
         )
         .unwrap();
@@ -440,6 +516,7 @@ mod tests {
                 title: None,
                 body: Some("x".into()),
                 date: None,
+                time: None,
             },
         );
         assert!(res.is_err());
@@ -462,6 +539,7 @@ mod tests {
                 title: None,
                 body: Some("x".into()),
                 date: Some("2020-01-01".into()),
+                time: None,
             },
         )
         .unwrap();
@@ -472,6 +550,7 @@ mod tests {
                 title: None,
                 body: None,
                 date: Some("2020-02-02".into()),
+                time: None,
             },
         )
         .unwrap();
@@ -480,6 +559,138 @@ mod tests {
             ids(list_journals(&conn, "2020-02-02").unwrap()),
             vec![e.id]
         );
+    }
+
+    #[test]
+    fn stores_a_normalized_optional_time_on_create() {
+        let mut conn = make();
+        let e = create_journal(
+            &mut conn,
+            &JournalInput {
+                title: None,
+                body: Some("x".into()),
+                date: Some("2026-11-09".into()),
+                time: Some(" 9:05 ".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(e.time.as_deref(), Some("09:05"));
+
+        let blank = create_journal(
+            &mut conn,
+            &JournalInput {
+                title: None,
+                body: Some("y".into()),
+                date: Some("2026-11-09".into()),
+                time: Some("   ".into()),
+            },
+        )
+        .unwrap();
+        assert!(blank.time.is_none());
+
+        let invalid = create_journal(
+            &mut conn,
+            &JournalInput {
+                title: None,
+                body: Some("z".into()),
+                date: Some("2026-11-09".into()),
+                time: Some("25:00".into()),
+            },
+        );
+        assert!(invalid.is_err());
+    }
+
+    #[test]
+    fn update_sets_clears_and_keeps_time() {
+        let mut conn = make();
+        let e = create_journal(&mut conn, &input("orig")).unwrap();
+        assert!(e.time.is_none());
+
+        let set = update_journal(
+            &mut conn,
+            &e.id,
+            &JournalPatch {
+                title: None,
+                body: None,
+                date: None,
+                time: Some(Some("14:30".into())),
+            },
+        )
+        .unwrap();
+        assert_eq!(set.time.as_deref(), Some("14:30"));
+
+        let kept = update_journal(
+            &mut conn,
+            &e.id,
+            &JournalPatch {
+                title: Some(Some("T".into())),
+                body: None,
+                date: None,
+                time: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(kept.time.as_deref(), Some("14:30"));
+
+        let cleared = update_journal(
+            &mut conn,
+            &e.id,
+            &JournalPatch {
+                title: None,
+                body: None,
+                date: None,
+                time: Some(None),
+            },
+        )
+        .unwrap();
+        assert!(cleared.time.is_none());
+    }
+
+    fn insert_raw(conn: &Connection, id: &str, time: Option<&str>, created_at: &str) {
+        conn.execute(
+            "INSERT INTO journal_entries (id, title, body, date, time, createdAt, updatedAt, deletedAt)
+             VALUES (?1, NULL, 'b', '2026-11-09', ?2, ?3, ?3, NULL)",
+            params![id, time, created_at],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn lists_entries_with_an_explicit_time_in_wall_clock_order() {
+        let conn = make();
+        insert_raw(&conn, "noon", Some("12:00"), "2026-11-09T01:00:00.000Z");
+        insert_raw(&conn, "seven", Some("07:00"), "2026-11-09T02:00:00.000Z");
+        insert_raw(&conn, "nine", Some("09:00"), "2026-11-09T03:00:00.000Z");
+        assert_eq!(
+            ids(list_journals(&conn, "2026-11-09").unwrap()),
+            vec!["seven", "nine", "noon"]
+        );
+    }
+
+    #[test]
+    fn lists_untimed_entries_by_the_local_clock_time_of_created_at() {
+        let conn = make();
+        // 无 time:回退到 createdAt 的本地时刻;两个瞬时相差 2 小时,本地次序稳定。
+        insert_raw(&conn, "later", None, "2026-11-09T03:00:00.000Z");
+        insert_raw(&conn, "earlier", None, "2026-11-09T01:00:00.000Z");
+        assert_eq!(
+            ids(list_journals(&conn, "2026-11-09").unwrap()),
+            vec!["earlier", "later"]
+        );
+    }
+
+    #[test]
+    fn journal_patch_time_deserializes_three_states() {
+        let absent: JournalPatch = serde_json::from_str(r#"{"body":"x"}"#).unwrap();
+        assert!(absent.time.is_none());
+        let null: JournalPatch = serde_json::from_str(r#"{"time":null}"#).unwrap();
+        assert_eq!(null.time, Some(None));
+        let empty: JournalPatch = serde_json::from_str(r#"{"time":"  "}"#).unwrap();
+        assert_eq!(empty.time, Some(None));
+        let value: JournalPatch = serde_json::from_str(r#"{"time":" 7:05 "}"#).unwrap();
+        assert_eq!(value.time, Some(Some("07:05".to_string())));
+        let invalid: Result<JournalPatch, _> = serde_json::from_str(r#"{"time":"25:00"}"#);
+        assert!(invalid.is_err());
     }
 
     // 计划要求补的 serde 三态单测:缺省(title 不带)→ 保持;null/空串 → 置空;非空串 trim 后设值。

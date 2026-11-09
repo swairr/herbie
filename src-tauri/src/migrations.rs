@@ -11,18 +11,20 @@ const SQL_0002: &str = include_str!("../../migrations/0002.sql");
 const SQL_0003: &str = include_str!("../../migrations/0003.sql");
 const SQL_0004: &str = include_str!("../../migrations/0004.sql");
 const SQL_0005: &str = include_str!("../../migrations/0005.sql");
+const SQL_0006: &str = include_str!("../../migrations/0006.sql");
 
 struct Migration {
     version: i64,
     sql: &'static str,
 }
 
-const MIGRATIONS: [Migration; 5] = [
+const MIGRATIONS: [Migration; 6] = [
     Migration { version: 1, sql: SQL_0001 },
     Migration { version: 2, sql: SQL_0002 },
     Migration { version: 3, sql: SQL_0003 },
     Migration { version: 4, sql: SQL_0004 },
     Migration { version: 5, sql: SQL_0005 },
+    Migration { version: 6, sql: SQL_0006 },
 ];
 
 /// 在给定连接上执行所有未应用的迁移,返回最后应用的版本号。
@@ -113,12 +115,13 @@ mod tests {
         run_migrations(&mut conn).expect("rerun should not error");
         let mut stmt = conn.prepare("SELECT version FROM migrations ORDER BY version").unwrap();
         let rows: Vec<i64> = stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
-        assert_eq!(rows.len(), 5);
+        assert_eq!(rows.len(), 6);
         assert_eq!(rows[0], 1);
         assert_eq!(rows[1], 2);
         assert_eq!(rows[2], 3);
         assert_eq!(rows[3], 4);
         assert_eq!(rows[4], 5);
+        assert_eq!(rows[5], 6);
     }
 
     #[test]
@@ -357,6 +360,43 @@ mod tests {
             )
             .unwrap();
         assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn v6_adds_a_nullable_journal_time_column_without_backfill() {
+        let conn = make();
+        for sql in [SQL_0001, SQL_0002, SQL_0003, SQL_0004, SQL_0005] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.execute(
+            "INSERT INTO journal_entries (id, title, body, date, createdAt, updatedAt, deletedAt)
+             VALUES ('j1', NULL, 'b', '2026-11-09', '2026-11-09T10:00:00Z', '2026-11-09T10:00:00Z', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(SQL_0006).unwrap();
+
+        let time: Option<String> = conn
+            .query_row("SELECT time FROM journal_entries WHERE id = 'j1'", [], |r| r.get(0))
+            .unwrap();
+        assert!(time.is_none(), "existing entries keep a NULL time (no backfill)");
+
+        conn.execute("UPDATE journal_entries SET time = '14:30' WHERE id = 'j1'", []).unwrap();
+        let time: String = conn
+            .query_row("SELECT time FROM journal_entries WHERE id = 'j1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(time, "14:30");
+    }
+
+    #[test]
+    fn records_version_6_as_applied() {
+        let mut conn = make();
+        run_migrations(&mut conn).unwrap();
+        let v: i64 = conn
+            .query_row("SELECT version FROM migrations WHERE version = 6", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, 6);
+        run_migrations(&mut conn).expect("rerun should not error");
     }
 
     #[test]

@@ -29,6 +29,13 @@ export function localDateString(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+// Local clock time-of-day "HH:MM" of an ISO timestamp; null when unparseable.
+export function localTimeOfDay(iso: string): string | null {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 // A segment-like record carrying start (required) and end (null = still open).
 export interface IntervalLike {
   startAt: string

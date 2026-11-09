@@ -8,6 +8,7 @@ function make(partial: Partial<JournalEntry>): JournalEntry {
     title: null,
     body: 'body',
     date: '2026-08-04',
+    time: null,
     createdAt: '2026-08-04T00:00:00Z',
     updatedAt: '2026-08-04T00:00:00Z',
     deletedAt: null,
@@ -60,6 +61,36 @@ describe('exportJournalMarkdown', () => {
       make({ id: 'early', title: '早', createdAt: '2026-08-04T01:00:00Z' })
     ])
     expect(out.indexOf('id:early')).toBeLessThan(out.indexOf('id:late'))
+  })
+
+  it('renders a 时间 line under the heading when time is set', () => {
+    const out = exportJournalMarkdown('2026-08-04', [
+      make({ id: 'timed', title: '会议', body: '纪要', time: '14:30' })
+    ])
+    expect(out).toContain('## 会议 <!-- id:timed -->\n\n时间：14:30\n\n纪要')
+  })
+
+  it('omits the 时间 line when time is null', () => {
+    const out = exportJournalMarkdown('2026-08-04', [
+      make({ id: 'timed', title: '会议', body: '纪要', time: null })
+    ])
+    expect(out).not.toContain('时间：')
+  })
+
+  it('orders entries by explicit time before falling back to createdAt', () => {
+    const out = exportJournalMarkdown('2026-08-04', [
+      make({ id: 'afternoon', title: '下午', time: '15:00', createdAt: '2026-08-04T01:00:00Z' }),
+      make({ id: 'morning', title: '上午', time: '09:00', createdAt: '2026-08-04T02:00:00Z' })
+    ])
+    expect(out.indexOf('id:morning')).toBeLessThan(out.indexOf('id:afternoon'))
+  })
+
+  it('orders untimed entries by the local clock time of createdAt', () => {
+    const out = exportJournalMarkdown('2026-08-04', [
+      make({ id: 'later', title: '后', createdAt: '2026-08-04T03:00:00Z' }),
+      make({ id: 'earlier', title: '先', createdAt: '2026-08-04T01:00:00Z' })
+    ])
+    expect(out.indexOf('id:earlier')).toBeLessThan(out.indexOf('id:later'))
   })
 
   it('excludes soft-deleted entries', () => {
