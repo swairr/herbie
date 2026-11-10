@@ -49,7 +49,6 @@ const narrow = ref(false)
 const narrowTrack = ref<NarrowTrack>('plan')
 const hideIdle = ref(false)
 const errorMsg = ref<string | null>(null)
-const todoQuery = ref('')
 const journalDraftOpen = ref(false)
 
 const newTodoTitle = ref('')
@@ -138,11 +137,7 @@ const dayCounts = computed<Record<string, number>>(() => {
 
 // 右侧展示完整待办列表(未完成在前、已完成在后),拖拽任意条目即可安排/改期。
 const groupedTodos = computed(() => groupItems(allTodos.value))
-const filteredTodos = computed(() => {
-  const q = todoQuery.value.trim().toLowerCase()
-  const list = [...groupedTodos.value.pending, ...groupedTodos.value.done]
-  return q ? list.filter((t) => t.title.toLowerCase().includes(q)) : list
-})
+const visibleTodos = computed(() => [...groupedTodos.value.pending, ...groupedTodos.value.done])
 
 function isTimed(t: Todo): boolean {
   const start = timeToMinutes(t.plannedStart)
@@ -510,14 +505,8 @@ onBeforeUnmount(() => {
             @keydown="onAddTodoKeydown"
           />
         </section>
-        <input
-          v-model="todoQuery"
-          class="todo-search"
-          spellcheck="false"
-          placeholder="搜索待办…"
-        />
         <article
-          v-for="t in filteredTodos"
+          v-for="t in visibleTodos"
           :key="t.id"
           class="todo-item"
           :class="{ done: !!t.completedAt, overdue: !t.completedAt && isOverdue(t) }"
@@ -548,7 +537,6 @@ onBeforeUnmount(() => {
           <span class="drag-dots">⠿</span>
         </article>
         <p v-if="allTodos.length === 0" class="muted empty">还没有待办</p>
-        <p v-else-if="filteredTodos.length === 0" class="muted empty">没有匹配的待办</p>
       </aside>
     </div>
 
@@ -799,12 +787,6 @@ onBeforeUnmount(() => {
   75% {
     transform: translateX(6px);
   }
-}
-.todo-search {
-  width: 100%;
-  margin-bottom: 6px;
-  font-size: 12px;
-  padding: 4px 6px;
 }
 .todo-item {
   display: flex;
