@@ -82,9 +82,9 @@ onMounted(refresh)
 
 <template>
   <div class="page">
-    <header class="header">
+    <header class="page-header">
       <h1>时间</h1>
-      <div class="actions">
+      <div class="page-actions">
         <button :disabled="exporting" @click="doExport">
           {{ exporting ? '导出中…' : '导出时间记录' }}
         </button>
@@ -165,40 +165,6 @@ onMounted(refresh)
 </template>
 
 <style scoped>
-.page {
-  max-width: 760px;
-  margin: 0 auto;
-  padding: 16px;
-}
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.header h1 {
-  font-size: 18px;
-  margin: 0;
-}
-.actions {
-  display: flex;
-  gap: 8px;
-}
-.toast {
-  margin: 8px 0;
-  padding: 8px 10px;
-  background: var(--accent-soft);
-  border-radius: 6px;
-  font-size: 12px;
-}
-.daybar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 12px 0;
-}
-.daybar input {
-  width: auto;
-}
 .cards {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -301,13 +267,5 @@ th {
 }
 .seg-todo {
   font-size: 10px;
-}
-.muted {
-  color: var(--muted);
-  font-size: 12px;
-}
-.empty {
-  text-align: center;
-  padding: 20px 0;
 }
 </style>

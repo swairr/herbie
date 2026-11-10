@@ -167,7 +167,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page">
-    <header class="header">
+    <header class="page-header">
       <h1>设置</h1>
     </header>
 
@@ -203,7 +203,7 @@ onBeforeUnmount(() => {
       </label>
       <p v-if="mainShortcutError" class="error">{{ mainShortcutError }}</p>
 
-      <label class="field">
+      <label class="field wide">
         <span>导出目录</span>
         <div class="dir-row">
           <input v-model="exportDir" spellcheck="false" placeholder="留空则在应用数据目录导出" />
@@ -232,7 +232,7 @@ onBeforeUnmount(() => {
       <p v-if="autostartError" class="error">{{ autostartError }}</p>
 
       <h2 class="section-title">活动记录</h2>
-      <div class="field">
+      <div class="field wide">
         <span>状态</span>
         <span>{{ tracking?.available ? '正常记录' : '不可用' }}</span>
         <em v-if="tracking && !tracking.available" class="hint">{{ tracking.reason }}</em>
@@ -257,7 +257,7 @@ onBeforeUnmount(() => {
       </label>
       <p v-if="updateSkipCertError" class="error">{{ updateSkipCertError }}</p>
 
-      <div class="field">
+      <div class="field wide">
         <span>当前版本</span>
         <div class="update-line">
           <span>{{ updateVersion.sha ? `nightly-${updateVersion.sha.slice(0, 7)}` : '开发模式' }}</span>
@@ -273,13 +273,13 @@ onBeforeUnmount(() => {
       <p v-else-if="lastUpdateError && updateState.kind !== 'failed'" class="error">
         上次更新问题：{{ lastUpdateError }}
       </p>
-      <div v-else-if="updateState.kind === 'available'" class="field">
+      <div v-else-if="updateState.kind === 'available'" class="field wide">
         <div class="update-line">
           <span>新版本构建于 {{ updateState.builtAt }}</span>
           <button class="primary" @click="onApplyUpdate">立即更新</button>
         </div>
       </div>
-      <div v-else-if="updateState.kind === 'downloading'" class="field">
+      <div v-else-if="updateState.kind === 'downloading'" class="field wide">
         <div class="progress">
           <div class="bar" :style="{ width: updateState.progress + '%' }"></div>
         </div>
@@ -299,30 +299,32 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.page {
-  max-width: 600px;
-  margin: 0 auto;
-  padding: 16px;
-}
-.header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.header h1 {
-  font-size: 18px;
-  margin: 0;
-}
 .form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 28px;
+  margin-top: 4px;
+}
+.form > .section-title,
+.form > .error,
+.form > .actions,
+.form > .ok,
+.form > .progress {
+  grid-column: 1 / -1;
+}
+.form > .field.wide {
+  grid-column: 1 / -1;
+}
+@media (max-width: 900px) {
+  .form {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .field {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 }
 .field > span {
   font-size: 12px;
@@ -396,7 +398,9 @@ onBeforeUnmount(() => {
 .section-title {
   font-size: 13px;
   font-weight: 600;
-  margin: 8px 0 0;
+  margin: 10px 0 -2px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
   color: var(--text);
 }
 .update-line {
@@ -428,7 +432,7 @@ onBeforeUnmount(() => {
   color: var(--done);
   font-size: 12px;
 }
-.last-check {
-  display: block;
+.form > .last-check {
+  grid-column: 1 / -1;
 }
 </style>

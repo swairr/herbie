@@ -296,9 +296,9 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page">
-    <header class="header">
-      <h1>Herbie</h1>
-      <div class="actions">
+    <header class="page-header">
+      <h1>待办</h1>
+      <div class="page-actions">
         <button
           class="offwork"
           :class="{ active: offWork }"
@@ -460,32 +460,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.page {
-  max-width: 760px;
-  margin: 0 auto;
-  padding: 16px;
-}
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-.header h1 {
-  font-size: 18px;
-  margin: 0;
-}
-.actions {
-  display: flex;
-  gap: 8px;
-}
-.toast {
-  margin: 8px 0;
-  padding: 8px 10px;
-  background: var(--accent-soft);
-  border-radius: 6px;
-  font-size: 12px;
-}
 .add {
   display: flex;
   flex-direction: column;

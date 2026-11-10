@@ -9,6 +9,18 @@
   --border: #3a3a3a;
   --danger: #ff6b6b;
   --done: #6b9e6b;
+
+  /* 布局骨架:所有页签共用同一内容宽度与内边距,页签栏也对齐到该宽度。 */
+  --page-max: 1120px;
+  --page-x: 20px;
+  --page-y: 16px;
+  --radius: 8px;
+}
+
+@media (max-width: 720px) {
+  :root {
+    --page-x: 12px;
+  }
 }
 
 * {
@@ -82,4 +94,69 @@ a {
 }
 a:hover {
   text-decoration: underline;
+}
+
+/* 页面骨架:统一各页签的内容宽度、内边距与页头节奏。
+   `.page--fixed` 用于日程这类整页不滚、仅内部区域滚动的页面。 */
+.page {
+  width: 100%;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: var(--page-y) var(--page-x) 24px;
+}
+.page--fixed {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding-bottom: var(--page-y);
+  overflow: hidden;
+}
+.page-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 30px;
+  margin-bottom: 12px;
+}
+.page-header h1 {
+  font-size: 18px;
+  margin: 0;
+}
+.page-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.toast {
+  margin: 8px 0;
+  padding: 8px 10px;
+  background: var(--accent-soft);
+  border-radius: 6px;
+  font-size: 12px;
+  word-break: break-word;
+}
+.daybar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+.daybar input {
+  width: auto;
+}
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+.empty {
+  text-align: center;
+  padding: 20px 0;
 }

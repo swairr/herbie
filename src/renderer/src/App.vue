@@ -110,8 +110,8 @@ function goTo(r: string): void {
 .tabs {
   display: flex;
   align-items: center;
-  padding: 6px 12px;
-  max-width: 760px;
+  padding: 6px var(--page-x);
+  max-width: var(--page-max);
   margin: 0 auto;
 }
 .tab-list {

@@ -392,10 +392,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="page">
-    <header class="header">
+  <div class="page page--fixed">
+    <header class="page-header">
       <h1>日程</h1>
-      <div class="actions">
+      <div class="page-actions">
         <button :disabled="addAdding" @click="focusAddTodo">+ 待办</button>
         <button class="primary" @click="openJournalCreate">+ 日志</button>
       </div>
@@ -403,77 +403,42 @@ onBeforeUnmount(() => {
 
     <div v-if="errorMsg" class="toast error-toast">{{ errorMsg }}</div>
 
-    <section class="daybar">
-      <button @click="shiftDay(-1)">‹</button>
-      <input type="date" :value="day" @change="onDayInput" />
-      <button @click="shiftDay(1)">›</button>
-      <button class="ghost" @click="goToday">今天</button>
-    </section>
+    <section class="dayrow">
+      <div class="date-controls">
+        <button class="nav-btn" title="前一天" @click="shiftDay(-1)">‹</button>
+        <input class="date-input" type="date" :value="day" @change="onDayInput" />
+        <button class="nav-btn" title="后一天" @click="shiftDay(1)">›</button>
+        <button class="ghost" @click="goToday">今天</button>
+      </div>
 
-    <section class="weekstrip">
-      <button
-        v-for="d in week"
-        :key="d"
-        class="weekday"
-        :class="{ active: d === day, today: d === today }"
-        @click="selectDay(d)"
-        @dragover.prevent
-        @drop="onWeekDrop(d, $event)"
-      >
-        <span class="wd">{{ weekdayLabel(d) }}</span>
-        <span class="dn">{{ dayOfMonth(d) }}</span>
-        <span v-if="dayCounts[d]" class="count">{{ dayCounts[d] }}</span>
-      </button>
+      <div class="weekstrip">
+        <button
+          v-for="d in week"
+          :key="d"
+          class="weekday"
+          :class="{ active: d === day, today: d === today }"
+          @click="selectDay(d)"
+          @dragover.prevent
+          @drop="onWeekDrop(d, $event)"
+        >
+          <span class="wd">{{ weekdayLabel(d) }}</span>
+          <span class="dn">{{ dayOfMonth(d) }}</span>
+          <span v-if="dayCounts[d]" class="count">{{ dayCounts[d] }}</span>
+        </button>
+      </div>
+
+      <label class="idle-toggle">
+        <input v-model="hideIdle" type="checkbox" />
+        <span>隐藏空闲</span>
+      </label>
     </section>
 
     <div class="board">
       <section class="day-panel">
-        <div class="untimed-zone" @dragover.prevent @drop="onUntimedDrop">
-          <h2>全天 / 未定时间</h2>
-          <article
-            v-for="t in untimedTodos"
-            :key="t.id"
-            class="untimed-item"
-            :class="{ done: !!t.completedAt, overdue: isOverdue(t) }"
-            draggable="true"
-            @dragstart="onDragStart(t, $event)"
-            @dragend="onDragEnd"
-            @click="openTodo(t)"
-          >
-            <input
-              class="check"
-              type="checkbox"
-              :checked="!!t.completedAt"
-              @click.stop="toggleDone(t)"
-            />
-            <span class="title" :class="{ strikethrough: !!t.completedAt }">{{ t.title }}</span>
-            <span v-if="isOverdue(t)" class="overdue-tag">超期</span>
-          </article>
-          <article
-            v-for="e in untimedJournals"
-            :key="e.id"
-            class="untimed-item journal"
-            @click="openJournal(e)"
-          >
-            <span class="kind">日志</span>
-            <span class="title">{{ journalHead(e) }}</span>
-          </article>
-          <p v-if="untimedTodos.length === 0 && untimedJournals.length === 0" class="muted hint">
-            把待办拖到这里，安排到当天
-          </p>
-        </div>
-
-        <div class="toolbar">
-          <div v-if="narrow" class="segmented">
-            <button :class="{ active: narrowTrack === 'plan' }" @click="narrowTrack = 'plan'">计划</button>
-            <button :class="{ active: narrowTrack === 'actual' }" @click="narrowTrack = 'actual'">实际</button>
-            <button :class="{ active: narrowTrack === 'journal' }" @click="narrowTrack = 'journal'">日志</button>
-          </div>
-          <span v-else></span>
-          <label class="idle-toggle">
-            <input v-model="hideIdle" type="checkbox" />
-            <span>隐藏空闲</span>
-          </label>
+        <div v-if="narrow" class="segmented">
+          <button :class="{ active: narrowTrack === 'plan' }" @click="narrowTrack = 'plan'">计划</button>
+          <button :class="{ active: narrowTrack === 'actual' }" @click="narrowTrack = 'actual'">实际</button>
+          <button :class="{ active: narrowTrack === 'journal' }" @click="narrowTrack = 'journal'">日志</button>
         </div>
 
         <div ref="timelineScrollEl" class="timeline-scroll">
@@ -517,49 +482,90 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <aside class="todos-panel">
-        <h2>待办 <span class="count">{{ allTodos.length }}</span></h2>
-        <section class="add-todo" :class="{ shake: addShaking }">
-          <input
-            ref="addTitleInput"
-            v-model="newTodoTitle"
-            spellcheck="false"
-            placeholder="添加待办，回车提交"
-            @keydown="onAddTodoKeydown"
-          />
-        </section>
-        <article
-          v-for="t in visibleTodos"
-          :key="t.id"
-          class="todo-item"
-          :class="{ done: !!t.completedAt, overdue: !t.completedAt && isOverdue(t) }"
-          draggable="true"
-          @dragstart="onDragStart(t, $event)"
-          @dragend="onDragEnd"
-          @click="openTodo(t)"
-        >
-          <input
-            class="check"
-            type="checkbox"
-            :checked="!!t.completedAt"
-            @click.stop="toggleDone(t)"
-          />
-          <div class="todo-main">
-            <div class="todo-title" :class="{ strikethrough: !!t.completedAt }">{{ t.title }}</div>
-            <div class="todo-meta">
-              <span
-                v-if="t.plannedDate"
-                class="plan-chip"
-                :class="{ overdue: !t.completedAt && isOverdue(t) }"
-              >
-                {{ planLabel(t) }}
-              </span>
-              <span v-else class="muted">未安排</span>
-            </div>
+      <aside class="side-panel">
+        <section class="untimed-zone panel" @dragover.prevent @drop="onUntimedDrop">
+          <h2>全天 / 未定时间</h2>
+          <div class="untimed-list">
+            <article
+              v-for="t in untimedTodos"
+              :key="t.id"
+              class="untimed-item"
+              :class="{ done: !!t.completedAt, overdue: isOverdue(t) }"
+              draggable="true"
+              @dragstart="onDragStart(t, $event)"
+              @dragend="onDragEnd"
+              @click="openTodo(t)"
+            >
+              <input
+                class="check"
+                type="checkbox"
+                :checked="!!t.completedAt"
+                @click.stop="toggleDone(t)"
+              />
+              <span class="title" :class="{ strikethrough: !!t.completedAt }">{{ t.title }}</span>
+              <span v-if="isOverdue(t)" class="overdue-tag">超期</span>
+            </article>
+            <article
+              v-for="e in untimedJournals"
+              :key="e.id"
+              class="untimed-item journal"
+              @click="openJournal(e)"
+            >
+              <span class="kind">日志</span>
+              <span class="title">{{ journalHead(e) }}</span>
+            </article>
+            <p v-if="untimedTodos.length === 0 && untimedJournals.length === 0" class="muted hint">
+              把待办拖到这里，安排到当天
+            </p>
           </div>
-          <span class="drag-dots">⠿</span>
-        </article>
-        <p v-if="allTodos.length === 0" class="muted empty">还没有待办</p>
+        </section>
+
+        <section class="todos-panel panel">
+          <h2>待办 <span class="total">{{ allTodos.length }}</span></h2>
+          <section class="add-todo" :class="{ shake: addShaking }">
+            <input
+              ref="addTitleInput"
+              v-model="newTodoTitle"
+              spellcheck="false"
+              placeholder="添加待办，回车提交"
+              @keydown="onAddTodoKeydown"
+            />
+          </section>
+          <div class="todos-scroll">
+            <article
+              v-for="t in visibleTodos"
+              :key="t.id"
+              class="todo-item"
+              :class="{ done: !!t.completedAt, overdue: !t.completedAt && isOverdue(t) }"
+              draggable="true"
+              @dragstart="onDragStart(t, $event)"
+              @dragend="onDragEnd"
+              @click="openTodo(t)"
+            >
+              <input
+                class="check"
+                type="checkbox"
+                :checked="!!t.completedAt"
+                @click.stop="toggleDone(t)"
+              />
+              <div class="todo-main">
+                <div class="todo-title" :class="{ strikethrough: !!t.completedAt }">{{ t.title }}</div>
+                <div class="todo-meta">
+                  <span
+                    v-if="t.plannedDate"
+                    class="plan-chip"
+                    :class="{ overdue: !t.completedAt && isOverdue(t) }"
+                  >
+                    {{ planLabel(t) }}
+                  </span>
+                  <span v-else class="muted">未安排</span>
+                </div>
+              </div>
+              <span class="drag-dots">⠿</span>
+            </article>
+            <p v-if="allTodos.length === 0" class="muted empty">还没有待办</p>
+          </div>
+        </section>
       </aside>
     </div>
 
@@ -597,65 +603,51 @@ onBeforeUnmount(() => {
   </div>
 </template>
 
+
 <style scoped>
-.page {
-  max-width: 1280px;
-  width: 100%;
-  margin: 0 auto;
-  padding: 16px;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.header {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: space-between;
-}
-.header h1 {
-  font-size: 18px;
-  margin: 0;
-}
-.toast {
-  margin: 8px 0;
-  padding: 8px 10px;
-  background: var(--accent-soft);
-  border-radius: 6px;
-  font-size: 12px;
-  word-break: break-all;
-}
 .error-toast {
   color: var(--danger);
 }
-.daybar {
+
+/* 日期导航与周条合并为一行，给时间轴让出垂直空间；窄屏自动换行。 */
+.dayrow {
   display: flex;
   flex-shrink: 0;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  margin: 12px 0;
+  gap: 8px 12px;
+  margin: 0 0 12px;
 }
-.daybar input {
-  width: auto;
+.date-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.nav-btn {
+  padding: 4px 9px;
+}
+.date-input {
+  width: 138px;
+  padding: 4px 8px;
 }
 .weekstrip {
   display: grid;
-  flex-shrink: 0;
-  grid-template-columns: repeat(7, 1fr);
+  flex: 1 1 340px;
+  order: 2;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 4px;
-  margin-bottom: 12px;
 }
 .weekday {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 6px 2px;
-  border-radius: 8px;
+  gap: 1px;
+  padding: 3px 2px 4px;
+  border-radius: 7px;
   background: var(--panel);
   color: var(--muted);
+  line-height: 1.2;
 }
 .weekday.active {
   border-color: var(--accent);
@@ -670,28 +662,38 @@ onBeforeUnmount(() => {
   font-size: 10px;
 }
 .dn {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
 }
-.count {
+.weekday .count {
   position: absolute;
   top: 2px;
   right: 4px;
   font-size: 9px;
   color: var(--accent);
 }
+.idle-toggle {
+  display: flex;
+  order: 3;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.idle-toggle input {
+  width: auto;
+}
+
+/* 左侧只保留时间轴，右侧待办栏承载「全天」与全部待办，互不挤压。 */
 .board {
   display: grid;
   flex: 1;
   min-height: 0;
-  grid-template-columns: minmax(0, 1fr) 260px;
-  gap: 14px;
-}
-@media (max-width: 899px) {
-  .board {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) minmax(0, 180px);
-  }
+  grid-template-columns: minmax(0, 1fr) 252px;
+  gap: 12px;
 }
 .day-panel {
   display: flex;
@@ -699,15 +701,51 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
 }
-.untimed-zone {
+.segmented {
+  display: flex;
   flex-shrink: 0;
+  align-self: flex-start;
+  gap: 2px;
+  margin-bottom: 8px;
   background: var(--panel);
-  border: 1px dashed var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 2px;
+}
+.segmented button {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 3px 12px;
+  border-radius: 5px;
+}
+.segmented button.active {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.timeline-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.side-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+.untimed-zone {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  max-height: 150px;
   padding: 8px 10px;
-  margin-bottom: 10px;
-  min-height: 54px;
-  max-height: 120px;
+  border-style: dashed;
+}
+.untimed-list {
+  min-height: 32px;
   overflow-y: auto;
 }
 .untimed-zone h2,
@@ -756,60 +794,23 @@ onBeforeUnmount(() => {
   padding: 0 5px;
   flex-shrink: 0;
 }
-.toolbar {
+.hint {
+  margin: 4px 0 0;
+}
+
+.todos-panel {
   display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 6px;
-  min-height: 28px;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 10px;
 }
-.segmented {
-  display: flex;
-  gap: 2px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 2px;
-}
-.segmented button {
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  padding: 3px 12px;
-  border-radius: 5px;
-}
-.segmented button.active {
-  background: var(--accent-soft);
+.todos-panel h2 .total {
+  margin-left: 2px;
   color: var(--text);
 }
-.idle-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--muted);
-  cursor: pointer;
-}
-.idle-toggle input {
-  width: auto;
-}
-.timeline-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-.todos-panel {
-  min-height: 0;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px;
-  overflow-y: auto;
-}
 .add-todo {
+  flex-shrink: 0;
   margin-bottom: 6px;
 }
 .add-todo input {
@@ -831,6 +832,13 @@ onBeforeUnmount(() => {
   75% {
     transform: translateX(6px);
   }
+}
+.todos-scroll {
+  flex: 1;
+  min-height: 0;
+  margin: 0 -4px;
+  padding: 0 4px;
+  overflow-y: auto;
 }
 .todo-item {
   display: flex;
@@ -887,17 +895,6 @@ onBeforeUnmount(() => {
   cursor: grab;
   flex-shrink: 0;
 }
-.muted {
-  color: var(--muted);
-  font-size: 12px;
-}
-.hint {
-  margin: 4px 0 0;
-}
-.empty {
-  text-align: center;
-  padding: 12px 0;
-}
 .strikethrough {
   text-decoration: line-through;
   color: var(--muted);
@@ -906,5 +903,41 @@ onBeforeUnmount(() => {
   width: auto;
   flex-shrink: 0;
   cursor: pointer;
+}
+
+@media (max-width: 899px) {
+  .weekstrip {
+    order: 3;
+    flex-basis: 100%;
+  }
+  .idle-toggle {
+    order: 2;
+  }
+  /* 窄屏不再把时间轴和待办挤在同一屏：整页可滚，时间轴保持可用高度，
+     待办栏顺次排在下方。 */
+  .page--fixed {
+    height: auto;
+    overflow: visible;
+  }
+  .board {
+    display: flex;
+    flex-direction: column;
+    flex: none;
+    gap: 10px;
+  }
+  .day-panel {
+    flex: none;
+    height: max(320px, 55vh);
+  }
+  .side-panel {
+    flex: none;
+  }
+  .untimed-zone {
+    max-height: 120px;
+  }
+  .todos-panel {
+    flex: none;
+    max-height: 320px;
+  }
 }
 </style>
