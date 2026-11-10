@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { JournalEntry, Segment, Todo, TrackingStatus } from '@shared/types'
 import { localDateString } from '@shared/time'
 import {
   addLocalDays,
   dayOfMonth,
   expandGridRange,
+  formatPlanLabel,
   isSlotOverdue,
   layoutDay,
   minutesToTime,
@@ -16,6 +17,8 @@ import {
   SNAP_MINUTES
 } from '@shared/schedule'
 import { actualMsByTodo, aggregateDaySegments, placeJournals } from '@shared/timeline'
+import { groupItems } from '../utils'
+import { useAddTodo } from '../composables/useAddTodo'
 import { topFor } from '../timeline-geometry'
 import ScheduleEditor from '../components/ScheduleEditor.vue'
 import SegmentEditor from '../components/SegmentEditor.vue'
@@ -33,7 +36,6 @@ type NarrowTrack = 'plan' | 'actual' | 'journal'
 const day = ref(todayLocal())
 const weekTodos = ref<Todo[]>([])
 const allTodos = ref<Todo[]>([])
-const backlog = ref<Todo[]>([])
 const segments = ref<Segment[]>([])
 const journals = ref<JournalEntry[]>([])
 const tracking = ref<TrackingStatus | null>(null)
@@ -47,7 +49,17 @@ const narrow = ref(false)
 const narrowTrack = ref<NarrowTrack>('plan')
 const hideIdle = ref(false)
 const errorMsg = ref<string | null>(null)
-const backlogQuery = ref('')
+const todoQuery = ref('')
+const journalDraftOpen = ref(false)
+
+const newTodoTitle = ref('')
+const newTodoDetail = ref('')
+const addTitleInput = ref<HTMLInputElement | null>(null)
+const {
+  adding: addAdding,
+  shaking: addShaking,
+  submit: submitTodo
+} = useAddTodo(newTodoTitle, newTodoDetail)
 
 const dragId = ref<string | null>(null)
 const dragDuration = ref(60)
@@ -124,10 +136,12 @@ const dayCounts = computed<Record<string, number>>(() => {
   return out
 })
 
-const filteredBacklog = computed(() => {
-  const q = backlogQuery.value.trim().toLowerCase()
-  if (!q) return backlog.value
-  return backlog.value.filter((t) => t.title.toLowerCase().includes(q))
+// 右侧展示完整待办列表(未完成在前、已完成在后),拖拽任意条目即可安排/改期。
+const groupedTodos = computed(() => groupItems(allTodos.value))
+const filteredTodos = computed(() => {
+  const q = todoQuery.value.trim().toLowerCase()
+  const list = [...groupedTodos.value.pending, ...groupedTodos.value.done]
+  return q ? list.filter((t) => t.title.toLowerCase().includes(q)) : list
 })
 
 function isTimed(t: Todo): boolean {
@@ -138,6 +152,10 @@ function isTimed(t: Todo): boolean {
 
 function isOverdue(t: Todo): boolean {
   return isSlotOverdue(t, now.value)
+}
+
+function planLabel(t: Todo): string {
+  return formatPlanLabel(t, today.value)
 }
 
 function journalHead(e: JournalEntry): string {
@@ -155,16 +173,14 @@ function flashError(e: unknown): void {
 async function refresh(): Promise<void> {
   const seq = ++refreshSeq
   try {
-    const [scheduled, unscheduled, all, daySegments, dayJournals] = await Promise.all([
+    const [scheduled, all, daySegments, dayJournals] = await Promise.all([
       window.api.todos.scheduled(weekStart.value, weekEnd.value),
-      window.api.todos.unscheduled(),
       window.api.todos.list(),
       window.api.segments.list(day.value),
       window.api.journal.list(day.value)
     ])
     if (seq !== refreshSeq) return
     weekTodos.value = scheduled
-    backlog.value = unscheduled
     allTodos.value = all
     segments.value = daySegments
     journals.value = dayJournals
@@ -185,9 +201,6 @@ function selectDay(d: string): void {
   day.value = d
 }
 
-function goSettings(): void {
-  location.hash = '#/settings'
-}
 
 function onDayInput(e: Event): void {
   const v = (e.target as HTMLInputElement).value
@@ -206,12 +219,31 @@ function openJournal(e: JournalEntry): void {
   editingJournal.value = e
 }
 
+function openJournalCreate(): void {
+  journalDraftOpen.value = true
+}
+
+async function focusAddTodo(): Promise<void> {
+  await nextTick()
+  addTitleInput.value?.focus()
+}
+
+async function submitAddTodo(): Promise<void> {
+  const created = await submitTodo()
+  if (!created) return
+  await refresh()
+  await focusAddTodo()
+}
+
+function onAddTodoKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    void submitAddTodo()
+  }
+}
+
 function findTodo(id: string): Todo | undefined {
-  return (
-    weekTodos.value.find((t) => t.id === id) ??
-    backlog.value.find((t) => t.id === id) ??
-    allTodos.value.find((t) => t.id === id)
-  )
+  return weekTodos.value.find((t) => t.id === id) ?? allTodos.value.find((t) => t.id === id)
 }
 
 async function assign(
@@ -348,7 +380,8 @@ onBeforeUnmount(() => {
     <header class="header">
       <h1>日程</h1>
       <div class="actions">
-        <button class="ghost" title="设置" @click="goSettings">⚙</button>
+        <button :disabled="addAdding" @click="focusAddTodo">+ 待办</button>
+        <button class="primary" @click="openJournalCreate">+ 日志</button>
       </div>
     </header>
 
@@ -466,29 +499,56 @@ onBeforeUnmount(() => {
         </DayTimeline>
       </section>
 
-      <aside class="backlog">
-        <h2>待安排 <span class="count">{{ backlog.length }}</span></h2>
+      <aside class="todos-panel">
+        <h2>待办 <span class="count">{{ allTodos.length }}</span></h2>
+        <section class="add-todo" :class="{ shake: addShaking }">
+          <input
+            ref="addTitleInput"
+            v-model="newTodoTitle"
+            spellcheck="false"
+            placeholder="添加待办，回车提交"
+            @keydown="onAddTodoKeydown"
+          />
+        </section>
         <input
-          v-model="backlogQuery"
-          class="backlog-search"
+          v-model="todoQuery"
+          class="todo-search"
           spellcheck="false"
-          placeholder="搜索待安排…"
+          placeholder="搜索待办…"
         />
         <article
-          v-for="t in filteredBacklog"
+          v-for="t in filteredTodos"
           :key="t.id"
-          class="backlog-item"
+          class="todo-item"
+          :class="{ done: !!t.completedAt, overdue: !t.completedAt && isOverdue(t) }"
           draggable="true"
           @dragstart="onDragStart(t, $event)"
           @dragend="onDragEnd"
           @click="openTodo(t)"
         >
+          <input
+            class="check"
+            type="checkbox"
+            :checked="!!t.completedAt"
+            @click.stop="toggleDone(t)"
+          />
+          <div class="todo-main">
+            <div class="todo-title" :class="{ strikethrough: !!t.completedAt }">{{ t.title }}</div>
+            <div class="todo-meta">
+              <span
+                v-if="t.plannedDate"
+                class="plan-chip"
+                :class="{ overdue: !t.completedAt && isOverdue(t) }"
+              >
+                {{ planLabel(t) }}
+              </span>
+              <span v-else class="muted">未安排</span>
+            </div>
+          </div>
           <span class="drag-dots">⠿</span>
-          <span class="title">{{ t.title }}</span>
-          <button class="ghost sm" @click.stop="openTodo(t)">安排</button>
         </article>
-        <p v-if="backlog.length === 0" class="muted empty">没有未安排的待办</p>
-        <p v-else-if="filteredBacklog.length === 0" class="muted empty">没有匹配的待办</p>
+        <p v-if="allTodos.length === 0" class="muted empty">还没有待办</p>
+        <p v-else-if="filteredTodos.length === 0" class="muted empty">没有匹配的待办</p>
       </aside>
     </div>
 
@@ -514,6 +574,14 @@ onBeforeUnmount(() => {
       :default-date="day"
       @saved="onChildSaved"
       @close="editingJournal = null"
+    />
+
+    <JournalEditor
+      v-if="journalDraftOpen"
+      :entry="null"
+      :default-date="day"
+      @saved="onChildSaved"
+      @close="journalDraftOpen = false"
     />
   </div>
 </template>
@@ -616,7 +684,7 @@ onBeforeUnmount(() => {
   min-height: 54px;
 }
 .untimed-zone h2,
-.backlog h2 {
+.todos-panel h2 {
   font-size: 12px;
   color: var(--muted);
   margin: 0 0 6px;
@@ -699,47 +767,98 @@ onBeforeUnmount(() => {
 .idle-toggle input {
   width: auto;
 }
-.backlog {
+.todos-panel {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px;
   position: sticky;
   top: 12px;
-  max-height: calc(100vh - 220px);
+  max-height: calc(100vh - 200px);
   overflow: auto;
 }
-.backlog-item {
+.add-todo {
+  margin-bottom: 6px;
+}
+.add-todo input {
+  width: 100%;
+  font-size: 12px;
+  padding: 4px 6px;
+}
+.add-todo.shake {
+  animation: shake 0.4s;
+}
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-6px);
+  }
+  75% {
+    transform: translateX(6px);
+  }
+}
+.todo-search {
+  width: 100%;
+  margin-bottom: 6px;
+  font-size: 12px;
+  padding: 4px 6px;
+}
+.todo-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   padding: 5px 4px;
   border-radius: 6px;
   cursor: pointer;
 }
-.backlog-search {
-  margin-bottom: 6px;
-  font-size: 12px;
-  padding: 4px 6px;
-}
-.backlog-item:hover {
+.todo-item:hover {
   background: var(--panel-2);
 }
-.backlog-item .title {
+.todo-item.done {
+  opacity: 0.6;
+}
+.todo-item.overdue .todo-title {
+  color: var(--danger);
+}
+.todo-main {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.todo-title {
+  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.todo-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.plan-chip {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 7px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.plan-chip.overdue {
+  color: var(--danger);
+  border-color: var(--danger);
 }
 .drag-dots {
   color: var(--muted);
   font-size: 11px;
   cursor: grab;
-}
-.sm {
-  padding: 1px 7px;
-  font-size: 11px;
   flex-shrink: 0;
 }
 .muted {

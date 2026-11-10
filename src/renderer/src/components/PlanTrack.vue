@@ -106,14 +106,16 @@ onBeforeUnmount(() => {
     @dragend="emit('drag-end')"
     @click="emit('open', b.todo)"
   >
-    <div class="block-time">{{ b.todo.plannedStart }}–{{ b.todo.plannedEnd }}</div>
+    <div class="block-time">
+      <span>{{ b.todo.plannedStart }}–{{ b.todo.plannedEnd }}</span>
+      <span v-if="isOverdue(b.todo)" class="block-overdue">超期</span>
+    </div>
     <div class="block-title" :class="{ strikethrough: !!b.todo.completedAt }">
       {{ b.todo.title }}
     </div>
     <div class="block-meta">
       {{ planActualLabel((b.endMin - b.startMin) * 60000, actualOf(b.todo.id)) }}
     </div>
-    <div v-if="isOverdue(b.todo)" class="block-overdue">超期</div>
     <div
       class="resize-handle"
       draggable="false"
@@ -136,7 +138,7 @@ onBeforeUnmount(() => {
   border: 1px solid hsl(var(--hue) 60% 60% / 0.85);
   border-left-width: 3px;
   border-radius: 6px;
-  padding: 3px 6px;
+  padding: 2px 6px;
   overflow: hidden;
   cursor: pointer;
   display: flex;
@@ -159,12 +161,19 @@ onBeforeUnmount(() => {
   background: rgba(255, 107, 107, 0.12);
 }
 .block-time {
+  line-height: 1.2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
   font-size: 10px;
   color: var(--muted);
   flex-shrink: 0;
+  white-space: nowrap;
 }
 .block-title {
   font-size: 12px;
+  line-height: 1.2;
   flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -172,6 +181,7 @@ onBeforeUnmount(() => {
 }
 .block-meta {
   font-size: 10px;
+  line-height: 1.2;
   color: var(--muted);
   flex-shrink: 0;
   white-space: nowrap;
@@ -179,7 +189,7 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 .block-overdue {
-  font-size: 10px;
+  font-size: 9px;
   color: var(--danger);
   flex-shrink: 0;
 }

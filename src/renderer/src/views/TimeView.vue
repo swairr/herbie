@@ -72,9 +72,6 @@ async function doExport(): Promise<void> {
   setTimeout(() => (lastExport.value = null), 3000)
 }
 
-function goSettings(): void {
-  location.hash = '#/settings'
-}
 
 function onSaved(): void {
   void refresh()
@@ -91,7 +88,6 @@ onMounted(refresh)
         <button :disabled="exporting" @click="doExport">
           {{ exporting ? '导出中…' : '导出时间记录' }}
         </button>
-        <button class="ghost" title="设置" @click="goSettings">⚙</button>
       </div>
     </header>
 

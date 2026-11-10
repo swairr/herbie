@@ -131,6 +131,7 @@ function segRange(s: Segment): string {
 }
 .block-time {
   font-size: 10px;
+  line-height: 1.2;
   color: var(--muted);
   flex-shrink: 0;
   display: flex;
@@ -142,6 +143,7 @@ function segRange(s: Segment): string {
 }
 .block-label {
   font-size: 12px;
+  line-height: 1.2;
   flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -149,6 +151,7 @@ function segRange(s: Segment): string {
 }
 .block-detail {
   font-size: 10px;
+  line-height: 1.2;
   color: var(--muted);
   flex-shrink: 0;
   overflow: hidden;

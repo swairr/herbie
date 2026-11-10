@@ -275,9 +275,6 @@ async function toggleOffWork(): Promise<void> {
   offWork.value = state.offWork
 }
 
-function goSettings(): void {
-  location.hash = '#/settings'
-}
 
 onMounted(async () => {
   await refresh()
@@ -314,7 +311,6 @@ onBeforeUnmount(() => {
         <button :disabled="exporting" @click="doExport">
           {{ exporting ? '导出中…' : '导出 Markdown' }}
         </button>
-        <button class="ghost" title="设置" @click="goSettings">⚙</button>
       </div>
     </header>
 

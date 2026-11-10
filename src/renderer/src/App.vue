@@ -55,10 +55,13 @@ function goTo(r: string): void {
       活动记录不可用：{{ tracking.reason }}
     </div>
     <nav v-if="showTabs" class="tabs">
-      <button :class="{ active: route === 'main' }" @click="goTo('main')">待办</button>
-      <button :class="{ active: route === 'schedule' }" @click="goTo('schedule')">日程</button>
-      <button :class="{ active: route === 'time' }" @click="goTo('time')">时间</button>
-      <button :class="{ active: route === 'journal' }" @click="goTo('journal')">日志</button>
+      <div class="tab-list">
+        <button :class="{ active: route === 'schedule' }" @click="goTo('schedule')">日程</button>
+        <button :class="{ active: route === 'main' }" @click="goTo('main')">待办</button>
+        <button :class="{ active: route === 'time' }" @click="goTo('time')">时间</button>
+        <button :class="{ active: route === 'journal' }" @click="goTo('journal')">日志</button>
+      </div>
+      <button class="ghost settings" title="设置" @click="goTo('settings')">⚙</button>
     </nav>
     <component :is="view" />
   </template>
@@ -75,10 +78,15 @@ function goTo(r: string): void {
 }
 .tabs {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  justify-content: space-between;
   padding: 6px 12px 0;
   max-width: 760px;
   margin: 0 auto;
+}
+.tab-list {
+  display: flex;
+  gap: 4px;
 }
 .tabs button {
   border-bottom: 2px solid transparent;
@@ -94,5 +102,9 @@ function goTo(r: string): void {
 }
 .tabs button:hover {
   color: var(--text);
+}
+.settings {
+  border-bottom: 2px solid transparent;
+  padding: 4px 8px;
 }
 </style>
