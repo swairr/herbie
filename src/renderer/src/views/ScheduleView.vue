@@ -62,6 +62,7 @@ const {
 
 const dragId = ref<string | null>(null)
 const dragDuration = ref(60)
+const timelineScrollEl = ref<HTMLElement | null>(null)
 
 let tickTimer: ReturnType<typeof setInterval> | undefined
 let errorTimer: ReturnType<typeof setTimeout> | undefined
@@ -339,7 +340,25 @@ function onVisibility(): void {
   void refresh()
 }
 
-watch(day, () => void refresh())
+/** 打开/切日时把当前时刻放进时间线可视范围(约上 1/3 处);查看其他日期则回到顶部。 */
+function scrollToCurrentTime(): void {
+  const el = timelineScrollEl.value
+  if (!el) return
+  if (day.value !== today.value) {
+    el.scrollTop = 0
+    return
+  }
+  const minutes = now.value.getHours() * 60 + now.value.getMinutes()
+  const target = topFor(minutes, range.value) - el.clientHeight * 0.35
+  const max = Math.max(0, el.scrollHeight - el.clientHeight)
+  el.scrollTop = Math.min(Math.max(0, target), max)
+}
+
+watch(day, async () => {
+  await refresh()
+  await nextTick()
+  scrollToCurrentTime()
+})
 
 onMounted(async () => {
   mediaQuery = window.matchMedia('(max-width: 899px)')
@@ -354,6 +373,8 @@ onMounted(async () => {
     .then((s) => (tracking.value = s))
     .catch(() => {})
   await refresh()
+  await nextTick()
+  scrollToCurrentTime()
   tickTimer = setInterval(() => {
     if (document.hidden) return
     now.value = new Date()
@@ -455,43 +476,45 @@ onBeforeUnmount(() => {
           </label>
         </div>
 
-        <DayTimeline
-          :range="range"
-          :now-line-top="nowLineTop"
-          :show-plan="showPlan"
-          :show-actual="showActual"
-          :show-journal="showJournal"
-          @drop-minutes="onTimelineDrop"
-        >
-          <template #plan>
-            <PlanTrack
-              :blocks="planBlocks"
-              :actual-ms="actualMs"
-              :range="range"
-              :now="now"
-              @open="openTodo"
-              @drag-start="onDragStart"
-              @drag-end="onDragEnd"
-              @reschedule="onReschedule"
-            />
-          </template>
-          <template #actual>
-            <ActualTrack
-              :blocks="visibleActualBlocks"
-              :range="range"
-              :empty-hint="actualEmptyHint"
-              @open-segment="openSegment"
-            />
-          </template>
-          <template #journal>
-            <JournalTrack
-              :items="timedJournals"
-              :range="range"
-              :narrow="narrow"
-              @open="openJournal"
-            />
-          </template>
-        </DayTimeline>
+        <div ref="timelineScrollEl" class="timeline-scroll">
+          <DayTimeline
+            :range="range"
+            :now-line-top="nowLineTop"
+            :show-plan="showPlan"
+            :show-actual="showActual"
+            :show-journal="showJournal"
+            @drop-minutes="onTimelineDrop"
+          >
+            <template #plan>
+              <PlanTrack
+                :blocks="planBlocks"
+                :actual-ms="actualMs"
+                :range="range"
+                :now="now"
+                @open="openTodo"
+                @drag-start="onDragStart"
+                @drag-end="onDragEnd"
+                @reschedule="onReschedule"
+              />
+            </template>
+            <template #actual>
+              <ActualTrack
+                :blocks="visibleActualBlocks"
+                :range="range"
+                :empty-hint="actualEmptyHint"
+                @open-segment="openSegment"
+              />
+            </template>
+            <template #journal>
+              <JournalTrack
+                :items="timedJournals"
+                :range="range"
+                :narrow="narrow"
+                @open="openJournal"
+              />
+            </template>
+          </DayTimeline>
+        </div>
       </section>
 
       <aside class="todos-panel">
@@ -577,11 +600,17 @@ onBeforeUnmount(() => {
 <style scoped>
 .page {
   max-width: 1280px;
+  width: 100%;
   margin: 0 auto;
   padding: 16px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .header {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
 }
@@ -602,6 +631,7 @@ onBeforeUnmount(() => {
 }
 .daybar {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 6px;
   margin: 12px 0;
@@ -611,6 +641,7 @@ onBeforeUnmount(() => {
 }
 .weekstrip {
   display: grid;
+  flex-shrink: 0;
   grid-template-columns: repeat(7, 1fr);
   gap: 4px;
   margin-bottom: 12px;
@@ -651,25 +682,33 @@ onBeforeUnmount(() => {
 }
 .board {
   display: grid;
+  flex: 1;
+  min-height: 0;
   grid-template-columns: minmax(0, 1fr) 260px;
   gap: 14px;
-  align-items: start;
 }
 @media (max-width: 899px) {
   .board {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 180px);
   }
 }
 .day-panel {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 .untimed-zone {
+  flex-shrink: 0;
   background: var(--panel);
   border: 1px dashed var(--border);
   border-radius: 8px;
   padding: 8px 10px;
   margin-bottom: 10px;
   min-height: 54px;
+  max-height: 120px;
+  overflow-y: auto;
 }
 .untimed-zone h2,
 .todos-panel h2 {
@@ -719,6 +758,7 @@ onBeforeUnmount(() => {
 }
 .toolbar {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
@@ -755,15 +795,19 @@ onBeforeUnmount(() => {
 .idle-toggle input {
   width: auto;
 }
+.timeline-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
 .todos-panel {
+  min-height: 0;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px;
-  position: sticky;
-  top: 12px;
-  max-height: calc(100vh - 200px);
-  overflow: auto;
+  overflow-y: auto;
 }
 .add-todo {
   margin-bottom: 6px;

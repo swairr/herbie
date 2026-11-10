@@ -9,6 +9,7 @@ import SettingsView from './views/SettingsView.vue'
 import QuickAddView from './views/QuickAddView.vue'
 
 const route = ref(getRoute())
+const viewSlot = ref<HTMLElement | null>(null)
 // Tracking Unavailable 状态(ADR 0004):不可用期间顶部横幅常驻不可关(Q17 决策)。
 const tracking = ref<TrackingStatus | null>(null)
 
@@ -22,6 +23,7 @@ function onHashChange(): void {
   route.value = getRoute()
   // 切换页签回到页首,避免从长页面(如设置)带着滚动位置进入下一页。
   window.scrollTo({ top: 0 })
+  viewSlot.value?.scrollTo({ top: 0 })
 }
 
 onMounted(() => {
@@ -56,25 +58,40 @@ function goTo(r: string): void {
 <template>
   <component v-if="route === 'quickadd'" :is="view" />
   <template v-else>
-    <div v-if="tracking && !tracking.available" class="tracking-banner">
-      活动记录不可用：{{ tracking.reason }}
+    <div class="app-shell">
+      <div v-if="tracking && !tracking.available" class="tracking-banner">
+        活动记录不可用：{{ tracking.reason }}
+      </div>
+      <div v-if="showTabs" class="tabs-bar">
+        <nav class="tabs">
+          <div class="tab-list">
+            <button :class="{ active: route === 'schedule' }" @click="goTo('schedule')">日程</button>
+            <button :class="{ active: route === 'main' }" @click="goTo('main')">待办</button>
+            <button :class="{ active: route === 'time' }" @click="goTo('time')">时间</button>
+            <button :class="{ active: route === 'journal' }" @click="goTo('journal')">日志</button>
+            <button :class="{ active: route === 'settings' }" @click="goTo('settings')">设置</button>
+          </div>
+        </nav>
+      </div>
+      <div ref="viewSlot" class="view-slot">
+        <component :is="view" />
+      </div>
     </div>
-    <div v-if="showTabs" class="tabs-bar">
-      <nav class="tabs">
-        <div class="tab-list">
-          <button :class="{ active: route === 'schedule' }" @click="goTo('schedule')">日程</button>
-          <button :class="{ active: route === 'main' }" @click="goTo('main')">待办</button>
-          <button :class="{ active: route === 'time' }" @click="goTo('time')">时间</button>
-          <button :class="{ active: route === 'journal' }" @click="goTo('journal')">日志</button>
-          <button :class="{ active: route === 'settings' }" @click="goTo('settings')">设置</button>
-        </div>
-      </nav>
-    </div>
-    <component :is="view" />
   </template>
 </template>
 
 <style scoped>
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+.view-slot {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
 .tracking-banner {
   background: var(--panel-2);
   border-bottom: 1px solid var(--border);

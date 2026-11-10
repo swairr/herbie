@@ -97,9 +97,13 @@ function onDrop(e: DragEvent): void {
   min-width: 0;
 }
 .heads {
+  position: sticky;
+  top: 0;
+  z-index: 6;
   display: grid;
   align-items: end;
   margin-bottom: 4px;
+  background: var(--bg);
 }
 .heads.cols-1 {
   grid-template-columns: 42px minmax(0, 1fr);
