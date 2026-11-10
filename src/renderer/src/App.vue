@@ -18,10 +18,14 @@ function getRoute(): string {
   return h || 'schedule'
 }
 
+function onHashChange(): void {
+  route.value = getRoute()
+  // 切换页签回到页首,避免从长页面(如设置)带着滚动位置进入下一页。
+  window.scrollTo({ top: 0 })
+}
+
 onMounted(() => {
-  window.addEventListener('hashchange', () => {
-    route.value = getRoute()
-  })
+  window.addEventListener('hashchange', onHashChange)
   // 不可用与否在进程生命周期内是常驻事实,启动拉一次即可(动态探测留待未来实现追踪时)。
   window.api.tracker.getStatus().then((s) => (tracking.value = s))
 })
@@ -31,7 +35,8 @@ const showTabs = computed(
     route.value === 'main' ||
     route.value === 'schedule' ||
     route.value === 'time' ||
-    route.value === 'journal'
+    route.value === 'journal' ||
+    route.value === 'settings'
 )
 
 const view = computed(() => {
@@ -54,15 +59,17 @@ function goTo(r: string): void {
     <div v-if="tracking && !tracking.available" class="tracking-banner">
       活动记录不可用：{{ tracking.reason }}
     </div>
-    <nav v-if="showTabs" class="tabs">
-      <div class="tab-list">
-        <button :class="{ active: route === 'schedule' }" @click="goTo('schedule')">日程</button>
-        <button :class="{ active: route === 'main' }" @click="goTo('main')">待办</button>
-        <button :class="{ active: route === 'time' }" @click="goTo('time')">时间</button>
-        <button :class="{ active: route === 'journal' }" @click="goTo('journal')">日志</button>
-      </div>
-      <button class="ghost settings" title="设置" @click="goTo('settings')">⚙</button>
-    </nav>
+    <div v-if="showTabs" class="tabs-bar">
+      <nav class="tabs">
+        <div class="tab-list">
+          <button :class="{ active: route === 'schedule' }" @click="goTo('schedule')">日程</button>
+          <button :class="{ active: route === 'main' }" @click="goTo('main')">待办</button>
+          <button :class="{ active: route === 'time' }" @click="goTo('time')">时间</button>
+          <button :class="{ active: route === 'journal' }" @click="goTo('journal')">日志</button>
+          <button :class="{ active: route === 'settings' }" @click="goTo('settings')">设置</button>
+        </div>
+      </nav>
+    </div>
     <component :is="view" />
   </template>
 </template>
@@ -76,11 +83,17 @@ function goTo(r: string): void {
   padding: 6px 12px;
   text-align: center;
 }
+.tabs-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
 .tabs {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 6px 12px 0;
+  padding: 6px 12px;
   max-width: 760px;
   margin: 0 auto;
 }
@@ -102,9 +115,5 @@ function goTo(r: string): void {
 }
 .tabs button:hover {
   color: var(--text);
-}
-.settings {
-  border-bottom: 2px solid transparent;
-  padding: 4px 8px;
 }
 </style>

@@ -116,10 +116,6 @@ async function pickDir(): Promise<void> {
   if (p) exportDir.value = p
 }
 
-function back(): void {
-  location.hash = '#/main'
-}
-
 function startCapture(target: 'shortcut' | 'mainShortcut'): void {
   capturing.value = target
 }
@@ -172,11 +168,11 @@ onBeforeUnmount(() => {
 <template>
   <div class="page">
     <header class="header">
-      <button class="ghost" @click="back">← 返回</button>
       <h1>设置</h1>
     </header>
 
     <section class="form">
+      <h2 class="section-title">通用</h2>
       <label class="field">
         <span>快捷键</span>
         <button
@@ -235,6 +231,14 @@ onBeforeUnmount(() => {
       </label>
       <p v-if="autostartError" class="error">{{ autostartError }}</p>
 
+      <h2 class="section-title">活动记录</h2>
+      <div class="field">
+        <span>状态</span>
+        <span>{{ tracking?.available ? '正常记录' : '不可用' }}</span>
+        <em v-if="tracking && !tracking.available" class="hint">{{ tracking.reason }}</em>
+      </div>
+
+      <h2 class="section-title">更新</h2>
       <label class="field">
         <div class="check-row">
           <input type="checkbox" v-model="autoUpdateCheck" @change="onToggleAutoUpdate" />
@@ -253,14 +257,6 @@ onBeforeUnmount(() => {
       </label>
       <p v-if="updateSkipCertError" class="error">{{ updateSkipCertError }}</p>
 
-      <h2 class="section-title">活动记录</h2>
-      <div class="field">
-        <span>状态</span>
-        <span>{{ tracking?.available ? '正常记录' : '不可用' }}</span>
-        <em v-if="tracking && !tracking.available" class="hint">{{ tracking.reason }}</em>
-      </div>
-
-      <h2 class="section-title">更新</h2>
       <div class="field">
         <span>当前版本</span>
         <div class="update-line">
